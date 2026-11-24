@@ -17,6 +17,8 @@ const amer = p => { if (p >= 0.9995) return "LOCK"; if (p <= 0.0005) return "—
   return p >= 0.5 ? "−" + Math.max(100, r5(100 * p / (1 - p))) : "+" + Math.min(99995, Math.max(100, r5(100 * (1 - p) / p))); };
 const half = x => (Math.round(x * 2) / 2).toFixed(1);
 
+let roundWeeks = () => 1; // weeks per playoff round (JFFL: 2)
+const left = t => t.items.filter(i => !i.fut).length; // starters still to play (excludes a not-yet-played week)
 let prevFinals = null, T = {}, nextAt = 0, lastFetch = 0, lastChange = 0, lastSig = "", timer = null, anyLive = false, histKey = "", hist = [];
 const PV = {}, openRows = new Set();
 
@@ -218,7 +220,8 @@ function simulate(L, R, mode, weeks, br, liveWk, round) {
     }
     const out = play(bracket, (a, b, m) => {
       if (liveSc && m.r === round && liveWk.teams[a] && liveWk.teams[b]) return liveSc[a] >= liveSc[b] ? a : b;
-      return drawAvg(avg[a]) >= drawAvg(avg[b]) ? a : b;
+      let sa = 0, sb = 0; for (let k = roundWeeks(m.r); k > 0; k--) { sa += drawAvg(avg[a]); sb += drawAvg(avg[b]); }
+      return sa >= sb ? a : b;
     });
     const fin = bracket.find(m => m.p === 1) || bracket[bracket.length - 1]; maxR = fin.r;
     for (const t in out.reach) { const o = O[t]; for (let r = 1; r <= out.reach[t]; r++) o.reach[r] = (o.reach[r] || 0) + 1; if (out.reach[t] === fin.r) o.final++; }
@@ -242,7 +245,7 @@ function needsFor(i, res, mode, wk) {
   const p = mode === "race" ? o.make : o.champ, label = mode === "race" ? "playoffs" : "title";
   const k = pairOf[i], pair = k != null ? pairs[k] : null, opp = pair ? (pair[0] === i ? pair[1] : pair[0]) : null;
   const me = wk?.teams[i], them = opp != null ? wk?.teams[opp] : null;
-  const myLeft = me ? me.items.length : 0, oppLeft = them ? them.items.length : 0, gameDone = pair && !myLeft && !oppLeft;
+  const myLeft = me ? left(me) : 0, oppLeft = them ? left(them) : 0, gameDone = pair && !me?.items.length && !them?.items.length;
   const pw = cp(c, "A1"), pl = cp(c, "A0"), pt = cp(c, "B1"), pb = cp(c, "B0");
   const lines = [], chips = [];
   let head;
@@ -262,9 +265,9 @@ function needsFor(i, res, mode, wk) {
   }
   if (pair && !gameDone && me && them) {
     const lead = me.live - them.live;
-    if (!myLeft && oppLeft) lines.push(`Done at <b>${f1(me.live)}</b>. Needs <b>${nm(opp)}</b> to finish under that (now ${f1(them.live)}, ${oppLeft} still to play, proj. ${f1(projOf(them))}).`);
-    else if (myLeft && !oppLeft) lines.push(`Needs <b>${f1(Math.max(0, them.live - me.live + 0.01))}+</b> more to beat <b>${nm(opp)}</b> (${f1(them.live)}, done). Projected to add ${f1(projOf(me) - me.live)}.`);
-    else lines.push(`${lead >= 0 ? "Leads" : "Trails"} <b>${nm(opp)}</b> ${f1(me.live)}–${f1(them.live)}, ${myLeft} vs ${oppLeft} players left (proj. ${f1(projOf(me))}–${f1(projOf(them))}).`);
+    if (!me.items.length && them.items.length) lines.push(`Done at <b>${f1(me.live)}</b>. Needs <b>${nm(opp)}</b> to finish under that (now ${f1(them.live)}, ${oppLeft} still to play, proj. ${f1(projOf(them))}).`);
+    else if (me.items.length && !them.items.length) lines.push(`Needs <b>${f1(Math.max(0, them.live - me.live + 0.01))}+</b> more to beat <b>${nm(opp)}</b> (${f1(them.live)}, done). Projected to add ${f1(projOf(me) - me.live)}.`);
+    else lines.push(`${lead >= 0 ? "Leads" : "Trails"} <b>${nm(opp)}</b> ${f1(me.live)}–${f1(them.live)}, ${myLeft} vs ${oppLeft} players left (proj. ${f1(projOf(me))}–${f1(projOf(them))}${me.items.some(x => x.fut) ? " over both weeks" : ""}).`);
   } else if (pair && gameDone && me && them) lines.push(`${me.live >= them.live ? "Beat" : "Lost to"} <b>${nm(opp)}</b> ${f1(me.live)}–${f1(them.live)}.`);
   if (pw != null && pl != null && Math.abs(pw - pl) >= 0.02) chips.push([mode === "race" ? "If they win" : "Title odds with a win", pw], [mode === "race" ? "If they lose" : "With a loss", pl]);
   if (pt != null && pb != null && Math.abs(pt - pb) >= 0.08) chips.push([`Top-half score`, pt], [`Bottom half`, pb]);
@@ -285,7 +288,7 @@ function needsFor(i, res, mode, wk) {
         : `Wildcard race vs <b>${nm(t)}</b>: up ${f1(-gap)} PF (proj. +${f1(myRest)} vs +${f1(tRest)} still to come).`);
     }
   }
-  if (me && me.items.length) lines.push(`Still playing: ${me.items.slice().sort((a, b) => b.mu - a.mu).slice(0, 3).map(x => `${esc(x.name)} (${f1(x.mu)})`).join(", ")}${me.items.length > 3 ? ` +${me.items.length - 3} more` : ""}.`);
+  if (me && left(me)) lines.push(`Still playing: ${me.items.filter(x => !x.fut).sort((a, b) => b.mu - a.mu).slice(0, 3).map(x => `${esc(x.name)} (${f1(x.mu)})`).join(", ")}${left(me) > 3 ? ` +${left(me) - 3} more` : ""}.`);
   return { p, head, lines, chips, label };
 }
 
@@ -356,7 +359,7 @@ function detailRow(i, res, mode, wk, span) {
   const later = Array.from({ length: rounds - 1 }, (_, r) => [r + 2 === rounds ? "Make final" : "Reach round " + (r + 2), o.reach[r + 2] || 0]);
   const steps = mode === "race" ? [["Make playoffs", o.make], ...(res.byes ? [["First-round bye", o.bye]] : []), ...later, ["Win title", o.champ]] : [...later, ["Win title", o.champ]];
   const seeds = mode === "race" && o.make > 0.0005 ? `<div class="dsec"><div class="dh">Seed chances</div><div class="seeds">${o.seeds.map((p, s) => `<div><span style="height:${Math.max(2, p * 46)}px"></span><b>${s + 1}</b><small>${p >= .005 ? Math.round(p * 100) + "%" : ""}</small></div>`).join("")}</div></div>` : "";
-  const players = t ? `<div class="dsec"><div class="dh">This week · ${f1(t.live)} pts${t.items.length ? `, proj. ${f1(projOf(t))}` : ", done"}</div>${t.items.length ? `<ul class="pl">${t.items.slice().sort((a, b) => b.mu - a.mu).map(x => `<li><span>${esc(x.name)} <small>${esc(x.pos)} · ${esc(x.nfl)}${x.f < 1 ? " · " + Math.round(x.f * 100) + "% of game left" : ""}</small></span><b>+${f1(x.mu)}</b></li>`).join("")}</ul>` : `<p class="muted">Every starter has finished.</p>`}</div>` : "";
+  const players = t ? `<div class="dsec"><div class="dh">${t.items.some(x => x.fut) ? "This game" : "This week"} · ${f1(t.live)} pts${t.items.length ? `, proj. ${f1(projOf(t))}` : ", done"}</div>${t.items.length ? `<ul class="pl">${t.items.slice().sort((a, b) => b.mu - a.mu).map(x => `<li><span>${esc(x.name)} <small>${x.fut ? "not played yet" : `${esc(x.pos)} · ${esc(x.nfl)}`}${x.f < 1 ? " · " + Math.round(x.f * 100) + "% of game left" : ""}</small></span><b>+${f1(x.mu)}</b></li>`).join("")}</ul>` : `<p class="muted">Every starter has finished.</p>`}</div>` : "";
   return `<tr class="detail" data-for="${i}"${openRows.has(i) ? "" : " hidden"}><td colspan="${span}"><div class="dwrap">
     <div class="dsec"><div class="dh">Path to the title</div><div class="path">${steps.map(([l, p]) => `<div><small>${l}</small><div class="track"><i style="width:${p * 100}%"></i></div><b>${fpw(p)}</b></div>`).join("")}</div></div>
     ${seeds}${players}</div></td></tr>`;
@@ -446,7 +449,7 @@ function renderGames(wk, res, title, labels) {
       ${[[a, ta, tb], [b, tb, ta]].map(([id, t, u]) => `<div class="fr${t.live >= u.live ? " w" : ""}">${mono(id, "sm")}<span class="n">${nm(id)}</span><b>${f1(t.live)}</b></div>`).join("")}</div>`;
     const p = res.wp[a + "-" + b] ?? .5;
     const pa = projOf(ta), pb = projOf(tb), favA = pa >= pb, sp = half(Math.abs(pa - pb));
-    const side = (id, t, pj, cls) => `<div class="side ${cls}"><span class="n">${nm(id)}</span><span class="sc" ${anim("gs" + id, t.live, "pts")}>${f1(t.live)}</span><span class="pj">${t.items.length ? `proj ${f1(pj)} · ${t.items.length} left` : "done"}</span></div>`;
+    const side = (id, t, pj, cls) => `<div class="side ${cls}"><span class="n">${nm(id)}</span><span class="sc" ${anim("gs" + id, t.live, "pts")}>${f1(t.live)}</span><span class="pj">${t.items.length ? `proj ${f1(pj)}${left(t) ? ` · ${left(t)} left` : ""}` : "done"}</span></div>`;
     return `<div class="card mu"><div class="top2"><span>${labels ? labels[k] : "Matchup " + (k + 1)}</span><span class="lv">Win probability</span></div>
       ${needle(p, color(a), color(b))}
       <div class="vs">${side(a, ta, pa, "a")}<div class="mid"><span ${anim("gp" + a + "-" + b, Math.max(p, 1 - p))}>${fp(Math.max(p, 1 - p))}</span><br><span style='font-weight:600;font-size:11px'>${esc(code(p >= .5 ? a : b))}</span></div>${side(b, tb, pb, "b")}</div>
@@ -534,6 +537,7 @@ async function refresh() {
     let wkShown, res, mode, labels = null;
     if (lastScored < lastReg && curWeek < 99) {
       mode = "race";
+      { const rt = L.settings.playoff_round_type || 0, nR = Math.ceil(Math.log2(L.settings.playoff_teams || 6)); roundWeeks = r => rt === 2 || (rt === 1 && r === nR) ? 2 : 1; }
       const weeks = [], liveW = Math.min(curWeek, lastReg);
       for (let w = lastScored + 1; w <= lastReg; w++) {
         if (w <= curWeek) { const wk = await liveWeek(L, w); wk.cur = w === liveW; weeks.push(wk); }
@@ -548,15 +552,28 @@ async function refresh() {
       mode = "playoffs";
       const brAll = await get(`${S}/league/${C.leagueId}/winners_bracket`);
       const br = brAll.filter(m => !m.p || m.p === 1).sort((a, b) => a.r - b.r || a.m - b.m);
-      const maxR = Math.max(...br.map(m => m.r)), round = Math.min(maxR, Math.max(1, curWeek - pws + 1));
-      wkShown = await liveWeek(L, pws + round - 1);
+      const maxR = Math.max(...br.map(m => m.r)), rt = L.settings.playoff_round_type || 0;
+      // Sleeper: 0 = 1 week per round, 1 = two-week championship, 2 = every round is two weeks
+      roundWeeks = r => rt === 2 || (rt === 1 && r === maxR) ? 2 : 1;
+      const startOf = r => { let w = pws; for (let k = 1; k < r; k++) w += roundWeeks(k); return w; };
+      let round = 1; while (round < maxR && curWeek >= startOf(round + 1)) round++;
+      const rStart = startOf(round), rLen = roundWeeks(round), wIn = Math.min(rLen, Math.max(1, curWeek - rStart + 1));
+      wkShown = await liveWeek(L, rStart + wIn - 1);
+      const { avg } = standings(L, R);
+      if (wIn > 1) { // second week of a two-week game: add the first week's final points
+        for (const m of await get(`${S}/league/${C.leagueId}/matchups/${rStart}`)) if (wkShown.teams[m.roster_id]) wkShown.teams[m.roster_id].live += m.custom_points ?? m.points ?? 0;
+      }
+      for (let k = wIn; k < rLen; k++) for (const id in wkShown.teams) { // week(s) of this game not played yet
+        const a = avg[id] || 0; wkShown.teams[id].items.push({ nfl: "_wk" + k + "_" + id, mu: a, sd: 0.18 * a + 8, name: `Week ${rStart + k} (season avg.)`, pos: "", f: 1, fut: true });
+      }
       const live = br.filter(m => m.r === round && m.t1 && m.t2 && wkShown.teams[m.t1] && wkShown.teams[m.t2]);
       wkShown = { ...wkShown, pairs: live.map(m => [m.t1, m.t2]) };
-      labels = live.map(m => m.p === 1 ? "Championship" : "Game " + m.m);
-      loadHist(`jffl2:${C.leagueId}:${L.season}:w${wkShown.week}`);
+      const wkTag = rLen > 1 ? ` · week ${wIn} of ${rLen}` : "";
+      labels = live.map(m => (m.p === 1 ? "Championship" : "Game " + m.m) + wkTag);
+      loadHist(`jffl2:${C.leagueId}:${L.season}:w${rStart}`);
       res = simulate(L, R, mode, null, br, wkShown, round);
       res.br = br; res.round = round;
-      $("eyebrow").textContent = `${L.season} playoffs · ${round >= maxR ? "Championship week" : "Round " + round} · Week ${wkShown.week}`;
+      $("eyebrow").textContent = `${L.season} playoffs · ${round >= maxR ? "Championship" : "Round " + round} · ${rLen > 1 ? `Weeks ${rStart}–${rStart + rLen - 1} (week ${wIn} of ${rLen})` : "Week " + rStart}`;
     }
     res.wkLive = wkShown ? Object.fromEntries(Object.entries(wkShown.teams).map(([k, v]) => [k, v.live])) : {};
     const alive = mode === "race" ? ids.filter(i => res.O[i].make > 0.0005 && res.O[i].make < 0.9995) : [];
