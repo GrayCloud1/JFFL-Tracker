@@ -27,6 +27,7 @@ Edit `config.js`:
 | `pfWildcardSpots` | Playoff spots awarded by total PF instead of record (JFFL uses 1) |
 | `refreshSeconds` | Seconds between refreshes while NFL games are live |
 | `idleRefreshSeconds` | Seconds between refreshes when no games are on |
+| `nicknames` | Optional short names for the ticker, matchup lines and phone chart labels, e.g. `connorhouston: "Houston"`. Left empty, a short name is picked from each team name |
 | `sims` | Simulations per refresh (more is smoother, but slower on phones) |
 
 Everything else, including playoff teams, the playoff start week, the top-half scoring win and PPR scoring, is read from the league's Sleeper settings.

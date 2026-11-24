@@ -12,6 +12,13 @@ window.TRACKER_CONFIG = {
   refreshSeconds: 20,
   idleRefreshSeconds: 120,
 
+  // Short names shown in tight spots (scores ticker, matchup lines, chart labels on phones).
+  // Left empty, the site picks one from each team name ("Team Houston" -> "Houston").
+  // To override, add  "sleeper username or full team name": "Nickname",  e.g.
+  //   connorhouston: "Houston",
+  nicknames: {
+  },
+
   // Number of simulations per refresh.
   sims: 20000
 };

@@ -24,7 +24,15 @@ function gauss() { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v 
 const color = id => PAL[(id - 1) % PAL.length];
 const words = name => { let w = String(name).replace(/[^A-Za-z0-9 ]/g, "").trim().split(/\s+/).filter(Boolean); return w.some(x => /[A-Za-z]/.test(x)) ? w.filter(x => /[A-Za-z]/.test(x)) : w; };
 function initials(name) { const w = words(name); if (!w.length) return String(name).slice(0, 2).toUpperCase() || "?"; return (w.length > 1 ? w[0][0] + w[1][0] : w[0].slice(0, 2)).toUpperCase(); }
-const code = id => { const w = words(T[id].name); return (w.length > 2 ? w.map(x => x[0]).join("").slice(0, 3) : w.length === 2 ? w[0][0] + w[1].slice(0, 2) : (w[0] || "TM").slice(0, 3)).toUpperCase(); };
+// short, readable team name for tight spots (ticker, matchup lines, chart labels on phones)
+function shortName(name) {
+  let w = String(name).replace(/^\s*team\s+/i, "").split(/\s+/).map(x => x.replace(/^[^\p{L}\p{N}$]+|[^\p{L}\p{N}$]+$/gu, "")).filter(Boolean);
+  while (w.length > 1 && !/\p{L}/u.test(w[0]) && /[\/:]/.test(w[0])) w.shift();
+  let s = w[0] || String(name);
+  for (let k = 1; k < w.length && s.length < 6 && (s + " " + w[k]).length <= 12; k++) s += " " + w[k];
+  return s.length > 12 ? s.slice(0, 11) + "…" : s;
+}
+const code = id => T[id].short;
 const mono = (id, cls = "") => `<span class="mono ${cls}" style="background:${color(id)}" aria-hidden="true">${esc(initials(T[id].name))}${T[id].img ? `<img src="${esc(T[id].img)}" alt="" loading="lazy" onerror="this.remove()">` : ""}</span>`;
 const nm = id => esc(T[id].name);
 const anim = (k, v, f = "p") => `data-k="${k}" data-v="${v}" data-f="${f}"`;
@@ -461,7 +469,7 @@ function renderTrend(ids, heading) {
   const draw = () => {
     const W = svg.clientWidth, H = svg.clientHeight; if (!W || !H) return;
     const narrow = W < 560, lab = id => narrow ? code(id) : T[id].name.length > 18 ? T[id].name.slice(0, 17) + "…" : T[id].name;
-    const l = 40, r = narrow ? 84 : 190, t = 14, b = 30, iw = W - l - r, ih = H - t - b;
+    const l = 40, r = narrow ? 118 : 190, t = 14, b = 30, iw = W - l - r, ih = H - t - b;
     const vmax = Math.max(...pts.flatMap(h => sel.map(i => h.m[i] || 0)));
     const yMax = Math.min(1, Math.max(0.2, Math.ceil((vmax + 0.04) * 10) / 10)), step = yMax > 0.5 ? 0.25 : 0.1;
     const t0 = pts[0].t, t1 = Math.max(pts[pts.length - 1].t, t0 + 60000);
@@ -516,7 +524,8 @@ async function refresh() {
     const U = {}; users.forEach(u => U[u.user_id] = u);
     T = {}; R.forEach(r => { const u = U[r.owner_id] || {}, md = u.metadata || {};
       const img = /^https?:\/\//.test(md.avatar || "") ? md.avatar : u.avatar ? `https://sleepercdn.com/avatars/thumbs/${u.avatar}` : null;
-      T[r.roster_id] = { name: md.team_name || u.display_name || "Team " + r.roster_id, img }; });
+      const name = md.team_name || u.display_name || "Team " + r.roster_id, nick = (C.nicknames || {})[u.display_name] || (C.nicknames || {})[name.trim()];
+      T[r.roster_id] = { name, img, short: nick || shortName(name) }; });
     $("lg").textContent = L.name.toUpperCase().slice(0, 8);
     document.title = `${L.name} Playoff Forecast`;
     const pws = L.settings.playoff_week_start, lastReg = pws - 1, lastScored = L.settings.last_scored_leg || 0;
