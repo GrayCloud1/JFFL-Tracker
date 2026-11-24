@@ -5,9 +5,9 @@ A live playoff tracker for the JFFL Sleeper league. It's one static page: every 
 **What it shows**
 
 - **Regular season:** a projected playoff bracket, playoff odds for every team still in the race, live matchups with win probability, and an odds-over-time chart.
-- **Playoffs:** the live bracket with each game's score and win probability.
+- **Playoffs:** the live bracket, each game's score and win probability, and every team's live championship odds.
 
-It refreshes every 60 seconds while NFL games are on, and every 5 minutes otherwise.
+Odds refresh every 60 seconds, with a countdown to the next update.
 
 ## Turn on GitHub Pages (one time)
 
@@ -23,7 +23,7 @@ Edit `config.js`:
 |---|---|
 | `leagueId` | Sleeper league ID |
 | `pfWildcardSpots` | Playoff spots awarded by total PF instead of record (JFFL uses 1) |
-| `refreshSeconds` | Refresh interval during live games |
+| `refreshSeconds` | How often odds refresh, in seconds |
 | `sims` | Simulations per refresh (more is smoother, but slower on phones) |
 
 Everything else, including playoff teams, the playoff start week, the top-half scoring win and PPR scoring, is read from the league's Sleeper settings.

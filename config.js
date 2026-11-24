@@ -7,7 +7,7 @@ window.TRACKER_CONFIG = {
   // everyone who missed the top seeds by record. Set to 0 to turn off.
   pfWildcardSpots: 1,
 
-  // How often the page refreshes live data, in seconds.
+  // How often the page refreshes live data and odds, in seconds.
   refreshSeconds: 60,
 
   // Number of simulations per refresh.

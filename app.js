@@ -13,7 +13,7 @@ const ord = n => { const s = ["th", "st", "nd", "rd"], v = n % 100; return n + (
 const LINE = ["#2f7de1", "#e2572b", "#1c9e64", "#b04fd1", "#d49a00", "#e0457b", "#00a3b4", "#7a8c2a"];
 const clockFmt = t => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
-let lastFetch = 0, lastChange = 0, lastSig = "", timer = null, anyLive = false, histKey = "", hist = [];
+let nextAt = 0, lastFetch = 0, lastChange = 0, lastSig = "", timer = null, anyLive = false, histKey = "", hist = [];
 
 function gauss() { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
 
@@ -189,7 +189,8 @@ function renderGames(wk, T, winP, title, labels) {
   }).join("");
 }
 
-function renderTrend(T, ids) {
+function renderTrend(T, ids, heading) {
+  $("trendTitle").textContent = heading || "Odds over time";
   const pts = hist.filter(h => h.make);
   if (pts.length < 2 || !ids.length) { $("trendSec").hidden = !ids.length; $("trend").innerHTML = ""; $("legend").innerHTML = `<span style="--c:var(--line)">Leave this page open and the chart fills in as odds move</span>`; return; }
   $("trendSec").hidden = false;
@@ -207,7 +208,48 @@ function renderTrend(T, ids) {
 }
 
 // ---------- playoffs ----------
-async function playoffs(L, T, curWeek) {
+function simBracket(br, wk, round, R) {
+  const N = C.sims, avg = {}, champ = {}, final = {}, alive = {};
+  for (const r of R) { const s = r.settings, g = (s.wins + s.losses + (s.ties || 0)) / 2 || 1; avg[r.roster_id] = (s.fpts + (s.fpts_decimal || 0) / 100) / g; champ[r.roster_id] = 0; final[r.roster_id] = 0; }
+  const main = br.filter(m => !m.p || m.p === 1).sort((a, b) => a.r - b.r || a.m - b.m);
+  const fin = main.find(m => m.p === 1) || main[main.length - 1];
+  main.forEach(m => { if (m.t1) alive[m.t1] = 1; if (m.t2) alive[m.t2] = 1; });
+  for (let n = 0; n < N; n++) {
+    const res = {}, liveSc = drawWeek(wk);
+    const who = (t, f) => t ?? (f ? (f.w ? res[f.w]?.w : res[f.l]?.l) : null);
+    for (const m of main) {
+      const a = who(m.t1, m.t1_from), b = who(m.t2, m.t2_from);
+      let w, l;
+      if (m.w) { w = m.w; l = m.l; }
+      else if (a == null || b == null) { w = a ?? b; l = null; }
+      else {
+        let sa, sb;
+        if (m.r === round && wk.teams[a] && wk.teams[b]) { sa = liveSc[a]; sb = liveSc[b]; }
+        else { sa = avg[a] + (0.18 * avg[a] + 8) * gauss(); sb = avg[b] + (0.18 * avg[b] + 8) * gauss(); }
+        [w, l] = sa >= sb ? [a, b] : [b, a];
+      }
+      res[m.m] = { w, l };
+      if (m === fin) { if (a != null) final[a]++; if (b != null) final[b]++; if (w != null) champ[w]++; }
+    }
+  }
+  Object.keys(champ).forEach(i => { champ[i] /= N; final[i] /= N; });
+  return { champ, final, alive };
+}
+
+function renderTitleOdds(T, title, noDelta) {
+  const ids = Object.keys(title.alive).map(Number).sort((a, b) => title.champ[b] - title.champ[a] || title.final[b] - title.final[a]);
+  const first = !noDelta && hist[0] && hist[0].make;
+  $("oddsSec").hidden = false; $("oddsTitle").textContent = "Championship odds";
+  $("oddsCap").textContent = `Chance to win the title${first ? " · change since " + clockFmt(hist[0].t) : ""}`;
+  $("rows").innerHTML = ids.map(i => { const p = title.champ[i], d = first && first[i] != null ? Math.round((p - first[i]) * 100) : 0;
+    const shown = p >= 0.9995 ? "Champ" : p <= 0.0005 ? "Out" : p > 0.995 ? ">99%" : p < 0.005 ? "<1%" : Math.round(p * 100) + "%";
+    return `<div class="tr"><div><div class="nm">${esc(T[i].name)}</div><div class="sub">Makes final: ${pct(title.final[i]).replace("In", "100%").replace("Out", "0%")}</div></div>
+      <div class="track" role="img" aria-label="${shown}"><i style="width:${p * 100}%;background:${col(p * 2)}"></i></div>
+      <div><div class="pc" style="color:${col(p * 2)}">${shown}</div>${d ? `<span class="delta ${d > 0 ? "up" : "down"}">${d > 0 ? "▲" : "▼"} ${Math.abs(d)}</span>` : ""}</div></div>`; }).join("");
+}
+
+
+async function playoffs(L, T, curWeek, R) {
   const pws = L.settings.playoff_week_start, br = await get(`${S}/league/${C.leagueId}/winners_bracket`);
   const maxR = Math.max(...br.map(m => m.r)), round = Math.min(maxR, Math.max(1, curWeek - pws + 1));
   const wk = await liveWeek(L, pws + round - 1);
@@ -229,9 +271,14 @@ async function playoffs(L, T, curWeek) {
   const games = br.filter(m => m.r === round && m.t1 && m.t2 && wk.teams[m.t1] && wk.teams[m.t2]);
   const view = { ...wk, pairs: games.map(m => [m.t1, m.t2]) };
   const wp = {}; view.pairs.forEach(([a, b]) => wp[a + "-" + b] = winP(a, b));
-  pushHist({ t: Date.now(), wp });
+  const title = simBracket(br, wk, round, R);
+  pushHist({ t: Date.now(), wp, make: title.champ });
   renderGames(view, T, winP, `Round ${round} games`, games.map(label));
-  $("oddsSec").hidden = true; $("trendSec").hidden = true; $("rules").textContent = "";
+  renderTitleOdds(T, title);
+  const contenders = Object.keys(title.champ).map(Number).filter(i => title.champ[i] > 0.0005).sort((a, b) => title.champ[b] - title.champ[a]);
+  const ever = [...new Set(hist.flatMap(h => Object.keys(h.make || {}).filter(i => h.make[i] > 0.0005)))].map(Number);
+  renderTrend(T, ever.length ? ever : contenders, "Championship odds over time");
+  $("rules").textContent = "Later rounds are simulated from each team's season scoring average.";
   return wk;
 }
 
@@ -262,6 +309,18 @@ async function refresh() {
       $("title").textContent = alive.length ? "Playoff Picture" : "Playoff Field Set";
       heroFromRace(T, res, alive, pws + Math.ceil(Math.log2(res.P)) - 1);
       renderOdds(T, res, wkShown, alive);
+      if (!alive.length) {
+        // field is set: project the bracket and show title odds from season scoring averages
+        const f = res.field, b = res.byes, br = [], r1 = [], r2 = []; let m = 1;
+        for (let a = b, c = res.P - 1; a < c; a++, c--) { br.push({ m, r: 1, t1: f[a], t2: f[c] }); r1.push(m++); }
+        for (let i = 0; i < b; i++) { br.push({ m, r: 2, t1: f[i], t2: null, t2_from: { w: r1[b - 1 - i] } }); r2.push(m++); }
+        const semis = b ? r2 : r1;
+        if (semis.length === 2) {
+          br.push({ m, r: b ? 3 : 2, p: 1, t1: null, t1_from: { w: semis[0] }, t2: null, t2_from: { w: semis[1] } });
+          renderTitleOdds(T, simBracket(br, { teams: {} }, 0, R), true);
+          $("oddsCap").textContent = "Chance to win the title, from each team's season scoring average";
+        }
+      }
       if (wkShown) renderGames(wkShown, T, a => res.out[a].h2h, `Week ${liveW} matchups`);
       const ever = [...new Set(hist.flatMap(h => Object.keys(h.make || {}).filter(i => h.make[i] > 0.0005 && h.make[i] < 0.9995)))].map(Number);
       renderTrend(T, ever.length ? ever : alive);
@@ -269,7 +328,7 @@ async function refresh() {
       $("rules").textContent = `Seeds 1–${P - wc} go by record (PF breaks ties)${wc ? `; ${wc === 1 ? "seed " + P + " goes" : "the last " + wc + " seeds go"} to the most PF among the rest` : ""}.${med ? " The top half of scorers each week gets an extra win." : ""}`;
     } else {
       $("eyebrow").textContent = `${L.name.toUpperCase()} · ${curWeek >= 99 ? L.season + " SEASON" : "WEEK " + curWeek}`;
-      wkShown = await playoffs(L, T, curWeek);
+      wkShown = await playoffs(L, T, curWeek, R);
     }
     anyLive = !!(wkShown && wkShown.live && wkShown.live.length);
     const sig = wkShown ? Object.values(wkShown.teams).map(t => t.live).join(",") : "";
@@ -282,17 +341,19 @@ async function refresh() {
     console.error(err);
     $("dot").className = "dot err"; $("st1").textContent = "Can't reach Sleeper · retrying";
   }
-  timer = setTimeout(refresh, (anyLive ? C.refreshSeconds : 300) * 1000);
+  nextAt = Date.now() + C.refreshSeconds * 1000;
+  timer = setTimeout(refresh, C.refreshSeconds * 1000);
 }
 
 function tick() {
   if (!lastFetch) return;
   const ago = s => s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : `${Math.floor(s / 3600)}h ago`;
   $("st1").textContent = (anyLive ? "LIVE · " : "") + "Updated " + ago(Math.round((Date.now() - lastFetch) / 1000)) + (lastChange ? ` · scores moved ${ago(Math.round((Date.now() - lastChange) / 1000))}` : "");
+  if (nextAt) $("st3").textContent = `Next update in ${Math.max(0, Math.round((nextAt - Date.now()) / 1000))}s`;
 }
 
 $("refresh").addEventListener("click", refresh);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && Date.now() - lastFetch > 30000) refresh(); });
-setInterval(tick, 5000);
+setInterval(tick, 1000);
 refresh();
 })();
