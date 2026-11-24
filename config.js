@@ -7,8 +7,10 @@ window.TRACKER_CONFIG = {
   // everyone who missed the top seeds by record. Set to 0 to turn off.
   pfWildcardSpots: 1,
 
-  // How often the page refreshes live data and odds, in seconds.
-  refreshSeconds: 60,
+  // How often the page refreshes, in seconds: while NFL games are live, and otherwise.
+  // The page stops refreshing entirely while it's in the background.
+  refreshSeconds: 20,
+  idleRefreshSeconds: 120,
 
   // Number of simulations per refresh.
   sims: 20000

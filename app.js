@@ -465,8 +465,12 @@ function renderTrend(ids, heading) {
 }
 
 // ---------- main ----------
+// Refresh fast while NFL games are live, slowly otherwise, and not at all while the page is hidden
+// (phone locked, another app or tab in front) so idle phones don't burn battery.
+const waitMs = () => (anyLive ? C.refreshSeconds : (C.idleRefreshSeconds || 120)) * 1000;
 async function refresh() {
-  clearTimeout(timer);
+  clearTimeout(timer); timer = null;
+  if (document.hidden) { nextAt = 0; return; }
   try {
     const [L, users, R, st] = await Promise.all([get(`${S}/league/${C.leagueId}`), get(`${S}/league/${C.leagueId}/users`), get(`${S}/league/${C.leagueId}/rosters`), get(`${S}/state/nfl`)]);
     const U = {}; users.forEach(u => U[u.user_id] = u);
@@ -549,18 +553,23 @@ async function refresh() {
     $("pill").className = "pill"; $("pillT").textContent = "RETRYING";
     $("meta").textContent = "Couldn't reach Sleeper. Trying again shortly.";
   }
-  nextAt = Date.now() + C.refreshSeconds * 1000;
-  timer = setTimeout(refresh, C.refreshSeconds * 1000);
+  if (document.hidden) { nextAt = 0; return; }
+  nextAt = Date.now() + waitMs();
+  timer = setTimeout(refresh, waitMs());
 }
 
 function tick() {
-  if (!lastFetch) return;
+  if (!lastFetch || !nextAt) return;
   const ago = s => s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : `${Math.floor(s / 3600)}h ago`;
   $("meta").innerHTML = `Updated <b>${tFmt(lastFetch, true)}</b> · next update in <b>${Math.max(0, Math.round((nextAt - Date.now()) / 1000))}s</b>${lastChange ? ` · scores moved ${ago(Math.round((Date.now() - lastChange) / 1000))}` : ""}`;
 }
 
 $("refresh").addEventListener("click", refresh);
-document.addEventListener("visibilitychange", () => { if (!document.hidden && Date.now() - lastFetch > 30000) refresh(); });
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { clearTimeout(timer); timer = null; nextAt = 0; return; }
+  if (Date.now() - lastFetch >= Math.min(waitMs(), 15000)) refresh();
+  else { nextAt = lastFetch + waitMs(); timer = setTimeout(refresh, Math.max(0, nextAt - Date.now())); }
+});
 setInterval(tick, 1000);
 refresh();
 })();

@@ -9,7 +9,7 @@ A live playoff tracker for the JFFL Sleeper league. It's one static page: every 
 - **What each team needs:** a card for every team still alive showing their odds if they win or lose, who to root for, the score they need, and who's still playing.
 - Sleeper avatars, a "who wins it all" bar, animated odds changes, tap-to-expand team details, sound effects and optional piano/jazz music.
 
-Odds refresh every 60 seconds, with a countdown to the next update.
+Odds refresh every 20 seconds while NFL games are live and every 2 minutes otherwise, with a countdown to the next update. The page pauses while it's in the background (phone locked, another tab in front) and catches up as soon as it's opened again.
 
 ## Turn on GitHub Pages (one time)
 
@@ -25,7 +25,8 @@ Edit `config.js`:
 |---|---|
 | `leagueId` | Sleeper league ID |
 | `pfWildcardSpots` | Playoff spots awarded by total PF instead of record (JFFL uses 1) |
-| `refreshSeconds` | How often odds refresh, in seconds |
+| `refreshSeconds` | Seconds between refreshes while NFL games are live |
+| `idleRefreshSeconds` | Seconds between refreshes when no games are on |
 | `sims` | Simulations per refresh (more is smoother, but slower on phones) |
 
 Everything else, including playoff teams, the playoff start week, the top-half scoring win and PPR scoring, is read from the league's Sleeper settings.
