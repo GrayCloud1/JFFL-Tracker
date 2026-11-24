@@ -664,7 +664,7 @@ async function refresh() {
     lastFetch = Date.now();
     $("pill").className = "pill" + (anyLive ? " live" : "");
     $("pillT").textContent = anyLive ? "LIVE" : "UPDATED " + tFmt(lastFetch).toUpperCase();
-    $("status").textContent = anyLive ? `NFL games in progress: ${wkShown.live.join(" · ")}` : "No NFL games in progress. Not affiliated with Sleeper, ESPN or the NFL.";
+    $("status").textContent = anyLive ? `NFL games in progress: ${wkShown.live.join(" · ")}` : "No NFL games in progress.";
     tick();
   } catch (err) {
     console.error(err);
