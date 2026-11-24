@@ -15,7 +15,21 @@ Odds refresh every 20 seconds while NFL games are live and every 2 minutes other
 
 1. In this repo, open **Settings → Pages**.
 2. Under **Build and deployment**, set **Source** to *Deploy from a branch*, **Branch** to `main`, folder `/ (root)`, then click **Save**.
-3. After a minute the site is live at `https://graycloud1.github.io/JFFL-Tracker/`. Share that link with the league.
+3. After a minute the site is live at `https://graycloud1.github.io/JFFL-Tracker/`.
+
+## Custom domain
+
+The site lives at **https://jfflodds.com** (registered at Porkbun). The `CNAME` file in this repo tells GitHub Pages to serve that domain, and the old github.io link redirects to it. DNS at Porkbun:
+
+| Type | Host | Answer |
+|---|---|---|
+| A | (blank) | 185.199.108.153 |
+| A | (blank) | 185.199.109.153 |
+| A | (blank) | 185.199.110.153 |
+| A | (blank) | 185.199.111.153 |
+| CNAME | www | graycloud1.github.io |
+
+Keep auto-renew on at Porkbun so the domain never lapses.
 
 ## Settings
 
