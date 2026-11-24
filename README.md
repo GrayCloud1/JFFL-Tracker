@@ -6,6 +6,8 @@ A live playoff tracker for the JFFL Sleeper league. It's one static page: every 
 
 - **Regular season:** a projected playoff bracket, playoff odds for every team still in the race, live matchups with win probability, and an odds-over-time chart.
 - **Playoffs:** the live bracket, each game's score and win probability, and every team's live championship odds.
+- **What each team needs:** a card for every team still alive showing their odds if they win or lose, who to root for, the score they need, and who's still playing.
+- Sleeper avatars, a "who wins it all" bar, animated odds changes, tap-to-expand team details, sound effects and optional piano/jazz music.
 
 Odds refresh every 60 seconds, with a countdown to the next update.
 

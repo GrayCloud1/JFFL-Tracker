@@ -7,31 +7,44 @@ const get = u => fetch(u, { cache: "no-store" }).then(r => { if (!r.ok) throw ne
 const ESPN2SLP = { WSH: "WAS", JAC: "JAX" };
 const POS = ["QB", "RB", "WR", "TE", "K", "DEF"].map(p => "position[]=" + p).join("&");
 const PAL = ["#c8102e", "#1f5fbf", "#0a8a5f", "#7b3fbf", "#e07000", "#0f8fa8", "#8a5a2b", "#c2378a", "#6b8a00", "#4a5560", "#b8860b", "#2b3a8f"];
+const REDUCE = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const f1 = x => (+x).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const ord = n => { const s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
 const tFmt = (t, sec) => new Date(t).toLocaleTimeString([], sec ? { hour: "numeric", minute: "2-digit", second: "2-digit" } : { hour: "numeric", minute: "2-digit" });
 const fp = p => p >= 0.9995 ? "✓" : p <= 0.0005 ? "—" : p > 0.995 ? ">99%" : p < 0.005 ? "<1%" : Math.round(p * 100) + "%";
+const fpw = p => p >= 0.9995 ? "100%" : p <= 0.0005 ? "0%" : fp(p);
 const amer = p => { if (p >= 0.9995) return "LOCK"; if (p <= 0.0005) return "—"; const r5 = x => Math.round(x / 5) * 5;
   return p >= 0.5 ? "−" + Math.max(100, r5(100 * p / (1 - p))) : "+" + Math.min(99995, Math.max(100, r5(100 * (1 - p) / p))); };
 const half = x => (Math.round(x * 2) / 2).toFixed(1);
 
 let prevFinals = null, T = {}, nextAt = 0, lastFetch = 0, lastChange = 0, lastSig = "", timer = null, anyLive = false, histKey = "", hist = [];
+const PV = {}, openRows = new Set();
 
 function gauss() { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
 const color = id => PAL[(id - 1) % PAL.length];
-function initials(name) {
-  let w = String(name).replace(/[^A-Za-z0-9 ]/g, "").trim().split(/\s+/).filter(Boolean);
-  if (w.some(x => /[A-Za-z]/.test(x))) w = w.filter(x => /[A-Za-z]/.test(x));
-  if (!w.length) return String(name).slice(0, 2).toUpperCase() || "?";
-  return (w.length > 1 ? w[0][0] + w[1][0] : w[0].slice(0, 2)).toUpperCase();
-}
-const mono = id => `<span class="mono" style="background:${color(id)}" aria-hidden="true">${esc(initials(T[id].name))}</span>`;
-const code = id => { let w = String(T[id].name).replace(/[^A-Za-z0-9 ]/g, "").trim().split(/\s+/).filter(Boolean); if (w.some(x => /[A-Za-z]/.test(x))) w = w.filter(x => /[A-Za-z]/.test(x));
-  return (w.length > 2 ? w.map(x => x[0]).join("").slice(0, 3) : w.length === 2 ? w[0][0] + w[1].slice(0, 2) : (w[0] || "TM").slice(0, 3)).toUpperCase(); };
-function heat(p) {
+const words = name => { let w = String(name).replace(/[^A-Za-z0-9 ]/g, "").trim().split(/\s+/).filter(Boolean); return w.some(x => /[A-Za-z]/.test(x)) ? w.filter(x => /[A-Za-z]/.test(x)) : w; };
+function initials(name) { const w = words(name); if (!w.length) return String(name).slice(0, 2).toUpperCase() || "?"; return (w.length > 1 ? w[0][0] + w[1][0] : w[0].slice(0, 2)).toUpperCase(); }
+const code = id => { const w = words(T[id].name); return (w.length > 2 ? w.map(x => x[0]).join("").slice(0, 3) : w.length === 2 ? w[0][0] + w[1].slice(0, 2) : (w[0] || "TM").slice(0, 3)).toUpperCase(); };
+const mono = (id, cls = "") => `<span class="mono ${cls}" style="background:${color(id)}" aria-hidden="true">${esc(initials(T[id].name))}${T[id].img ? `<img src="${esc(T[id].img)}" alt="" loading="lazy" onerror="this.remove()">` : ""}</span>`;
+const nm = id => esc(T[id].name);
+const anim = (k, v, f = "p") => `data-k="${k}" data-v="${v}" data-f="${f}"`;
+function heat(p, k) {
   if (p <= 0.0005) return `<span class="heat" style="color:var(--mute)">—</span>`;
   const a = 0.07 + 0.88 * Math.min(1, p);
-  return `<span class="heat" style="background:rgba(var(--heat),${a.toFixed(2)});color:${a > 0.55 ? "#fff" : "var(--ink)"}">${fp(p)}</span>`;
+  return `<span class="heat" ${k ? anim(k, p) : ""} style="background:rgba(var(--heat),${a.toFixed(2)});color:${a > 0.55 ? "#fff" : "var(--ink)"}">${fp(p)}</span>`;
+}
+
+// count numbers toward their new value and flash green/red when odds move
+function animateAll() {
+  document.querySelectorAll("[data-k]").forEach(el => {
+    const k = el.dataset.k, v = +el.dataset.v, f = el.dataset.f, o = PV[k]; PV[k] = v;
+    if (o == null || Math.abs(o - v) < (f === "pts" ? 0.05 : 0.005)) return;
+    el.classList.remove("fu", "fd"); void el.offsetWidth; el.classList.add(v > o ? "fu" : "fd");
+    if (REDUCE) return;
+    const t0 = performance.now(), fmt = f === "pts" ? f1 : f === "pw" ? fpw : fp;
+    const step = t => { const q = Math.min(1, (t - t0) / 800), e = 1 - (1 - q) ** 3; el.textContent = fmt(o + (v - o) * e); if (q < 1) requestAnimationFrame(step); };
+    requestAnimationFrame(step);
+  });
 }
 
 // ---------- history (per viewer, per league + week) ----------
@@ -80,7 +93,8 @@ async function liveWeek(L, week) {
       const nfl = p.team, f = clock.frac[nfl] ?? 0;
       let mu = (p.stats && p.stats[key]) || 0;
       if (f === 1 && ["Out", "IR", "Sus", "PUP"].includes(p.player && p.player.injury_status)) mu = 0;
-      if (f > 0 && mu > 0) items.push({ nfl, mu: mu * f, sd: 0.62 * mu * Math.sqrt(f) });
+      const pl = p.player || {}, name = pl.position === "DEF" ? `${nfl} D/ST` : pl.last_name ? `${(pl.first_name || "")[0] ? pl.first_name[0] + ". " : ""}${pl.last_name}` : `${nfl} ${pl.position || "player"}`;
+      if (f > 0 && mu > 0) items.push({ nfl, mu: mu * f, sd: 0.62 * mu * Math.sqrt(f), name, pos: pl.position || "", f });
     });
     teams[m.roster_id] = { live: m.custom_points ?? m.points ?? 0, items };
   }
@@ -123,10 +137,10 @@ function play(br, pick) {
     if (b != null) reach[b] = Math.max(reach[b] || 0, m.r);
     let w, l;
     if (m.w) { w = m.w; l = m.l; } else if (a == null || b == null) { w = a ?? b; l = null; } else { w = pick(a, b, m); l = w === a ? b : a; }
-    res[m.m] = { w, l };
+    res[m.m] = { w, l, a, b };
   }
   const fin = br.find(m => m.p === 1) || br[br.length - 1];
-  return { reach, champ: res[fin.m].w };
+  return { reach, champ: res[fin.m].w, res };
 }
 
 // ---------- standings ----------
@@ -144,33 +158,55 @@ function seedField(ids, W, PF, P, wc) {
 }
 
 // ---------- simulation ----------
+// Besides the odds, it records conditional counts ("if this team wins / if that game goes this way")
+// that power the "What each team needs" cards.
 function simulate(L, R, mode, weeks, br, liveWk, round) {
   const N = C.sims, ids = R.map(r => r.roster_id), P = L.settings.playoff_teams || 6;
   const wc = Math.min(C.pfWildcardSpots || 0, P), byes = 2 ** Math.ceil(Math.log2(P)) - P;
   const { base, avg, med } = standings(L, R);
   const O = {}; ids.forEach(i => O[i] = { make: 0, bye: 0, seeds: Array(P).fill(0), reach: {}, final: 0, champ: 0, wMin: 1e9, wMax: -1 });
-  const wp = {}, fields = {};
+  const wp = {}, fields = {}, cond = {}, takers = {};
+  ids.forEach(i => { cond[i] = {}; takers[i] = {}; });
+  const inc = (i, key, hit) => { const c = cond[i][key] ||= [0, 0]; c[0]++; if (hit) c[1]++; };
+  const curWk = mode === "race" ? weeks.find(w => w.cur) : liveWk;
+  const pairs = curWk ? curWk.pairs : [];
+  const pairOf = {}; pairs.forEach((p, k) => { pairOf[p[0]] = k; pairOf[p[1]] = k; });
   let maxR = 0;
   for (let n = 0; n < N; n++) {
-    let bracket = br, liveSc = null;
+    let bracket = br, liveSc = null, curWin = null, curTop = null, field = null;
     if (mode === "race") {
       const W = {}, PF = {};
       ids.forEach(i => { W[i] = base[i].w; PF[i] = base[i].pf; });
       for (const wk of weeks) {
         const sc = {}; if (wk.future) ids.forEach(i => sc[i] = drawAvg(avg[i])); else Object.assign(sc, drawLive(wk));
         ids.forEach(i => PF[i] += sc[i] ?? 0);
-        for (const [a, b] of wk.pairs) { const w = sc[a] >= sc[b] ? a : b; W[w]++; if (wk.cur) wp[a + "-" + b] = (wp[a + "-" + b] || 0) + (w === a); }
-        if (med) [...ids].sort((a, b) => sc[b] - sc[a]).slice(0, Math.floor(ids.length / 2)).forEach(i => W[i]++);
+        const wins = wk.pairs.map(([a, b]) => sc[a] >= sc[b] ? a : b);
+        wins.forEach(w => W[w]++);
+        let top = null;
+        if (med) { top = new Set([...ids].sort((a, b) => sc[b] - sc[a]).slice(0, Math.floor(ids.length / 2))); top.forEach(i => W[i]++); }
+        if (wk.cur) { curWin = wins; curTop = top; wk.pairs.forEach(([a, b], k) => wp[a + "-" + b] = (wp[a + "-" + b] || 0) + (wins[k] === a)); }
       }
       ids.forEach(i => { O[i].wMin = Math.min(O[i].wMin, W[i]); O[i].wMax = Math.max(O[i].wMax, W[i]); });
-      const field = seedField(ids, W, PF, P, wc);
+      field = seedField(ids, W, PF, P, wc);
       field.forEach((i, k) => { O[i].make++; O[i].seeds[k]++; if (k < byes) O[i].bye++; });
       const key = field.join(","); fields[key] = (fields[key] || 0) + 1;
+      if (curWin) {
+        const inField = new Set(field), last = wc ? field[P - 1] : null;
+        for (const i of ids) {
+          const made = inField.has(i), k = pairOf[i];
+          if (k != null) inc(i, "A" + (curWin[k] === i ? 1 : 0), made);
+          if (curTop) inc(i, "B" + (curTop.has(i) ? 1 : 0), made);
+          if (k != null && curTop) inc(i, "A" + (curWin[k] === i ? 1 : 0) + "B" + (curTop.has(i) ? 1 : 0), made);
+          curWin.forEach((w, j) => { if (j !== k) inc(i, "P" + j + (w === pairs[j][0] ? "a" : "b"), made); });
+          if (!made && last != null) takers[i][last] = (takers[i][last] || 0) + 1;
+        }
+      }
       bracket = seedBracket(field);
       if (!bracket) continue;
     } else {
       liveSc = drawLive(liveWk);
-      for (const [a, b] of liveWk.pairs) wp[a + "-" + b] = (wp[a + "-" + b] || 0) + (liveSc[a] >= liveSc[b]);
+      curWin = liveWk.pairs.map(([a, b]) => liveSc[a] >= liveSc[b] ? a : b);
+      liveWk.pairs.forEach(([a, b], k) => wp[a + "-" + b] = (wp[a + "-" + b] || 0) + (curWin[k] === a));
     }
     const out = play(bracket, (a, b, m) => {
       if (liveSc && m.r === round && liveWk.teams[a] && liveWk.teams[b]) return liveSc[a] >= liveSc[b] ? a : b;
@@ -179,11 +215,89 @@ function simulate(L, R, mode, weeks, br, liveWk, round) {
     const fin = bracket.find(m => m.p === 1) || bracket[bracket.length - 1]; maxR = fin.r;
     for (const t in out.reach) { const o = O[t]; for (let r = 1; r <= out.reach[t]; r++) o.reach[r] = (o.reach[r] || 0) + 1; if (out.reach[t] === fin.r) o.final++; }
     if (out.champ != null) O[out.champ].champ++;
+    if (mode !== "race" && curWin) for (const i of ids) {
+      const won = out.champ === i, k = pairOf[i];
+      if (k != null) inc(i, "A" + (curWin[k] === i ? 1 : 0), won);
+      curWin.forEach((w, j) => { if (j !== k) inc(i, "P" + j + (w === pairs[j][0] ? "a" : "b"), won); });
+    }
   }
   ids.forEach(i => { const o = O[i]; o.make /= N; o.bye /= N; o.final /= N; o.champ /= N; o.seeds = o.seeds.map(c => c / N); for (const r in o.reach) o.reach[r] /= N; });
   for (const k in wp) wp[k] /= N;
   const best = Object.entries(fields).sort((a, b) => b[1] - a[1])[0];
-  return { O, wp, P, wc, byes, med, base, maxR, field: best ? best[0].split(",").map(Number) : null };
+  return { O, wp, P, wc, byes, med, base, avg, maxR, cond, takers, pairs, pairOf, field: best ? best[0].split(",").map(Number) : null };
+}
+
+// ---------- "what each team needs" ----------
+const cp = (c, key) => { const x = c[key]; return x && x[0] >= 40 ? x[1] / x[0] : null; };
+function needsFor(i, res, mode, wk) {
+  const { O, cond, takers, pairs, pairOf, wc, base } = res, c = cond[i], o = O[i];
+  const p = mode === "race" ? o.make : o.champ, label = mode === "race" ? "playoffs" : "title";
+  const k = pairOf[i], pair = k != null ? pairs[k] : null, opp = pair ? (pair[0] === i ? pair[1] : pair[0]) : null;
+  const me = wk?.teams[i], them = opp != null ? wk?.teams[opp] : null;
+  const myLeft = me ? me.items.length : 0, oppLeft = them ? them.items.length : 0, gameDone = pair && !myLeft && !oppLeft;
+  const pw = cp(c, "A1"), pl = cp(c, "A0"), pt = cp(c, "B1"), pb = cp(c, "B0");
+  const lines = [], chips = [];
+  let head;
+  if (p >= 0.9995) head = mode === "race" ? "Clinched a playoff spot" : "Champion";
+  else if (p <= 0.0005) head = "Eliminated";
+  else if (pw != null && pl != null && pw >= 0.995 && pl < 0.98) head = mode === "race" ? "In with a win" : "Win and they're champs";
+  else if (cp(c, "A1B1") >= 0.995 && pw < 0.995) head = "In with a win and a top-half score";
+  else if (pt != null && pt >= 0.995 && pb < 0.98) head = "In with a top-half score";
+  else if (pl != null && pl <= 0.005 && pw > 0.02) head = mode === "race" ? "Must win" : "Win or go home";
+  else head = p >= 0.75 ? "In control" : p >= 0.4 ? "On the bubble" : "Needs help";
+  if (mode !== "race" && !pair && res.br) {
+    // a team with a bye this round: say who they'll face next
+    const nx = res.br.find(m => m.r === res.round + 1 && (m.t1 === i || m.t2 === i)), f = nx && (nx.t1 === i ? nx.t2_from : nx.t1_from);
+    const src = f && res.br.find(m => m.m === (f.w || f.l));
+    head = "First-round bye";
+    if (src && src.t1 && src.t2) lines.push(`Plays the ${f.w ? "winner" : "loser"} of <b>${nm(src.t1)}</b> vs <b>${nm(src.t2)}</b> next round.`);
+  }
+  if (pair && !gameDone && me && them) {
+    const lead = me.live - them.live;
+    if (!myLeft && oppLeft) lines.push(`Done at <b>${f1(me.live)}</b>. Needs <b>${nm(opp)}</b> to finish under that (now ${f1(them.live)}, ${oppLeft} still to play, proj. ${f1(projOf(them))}).`);
+    else if (myLeft && !oppLeft) lines.push(`Needs <b>${f1(Math.max(0, them.live - me.live + 0.01))}+</b> more to beat <b>${nm(opp)}</b> (${f1(them.live)}, done). Projected to add ${f1(projOf(me) - me.live)}.`);
+    else lines.push(`${lead >= 0 ? "Leads" : "Trails"} <b>${nm(opp)}</b> ${f1(me.live)}–${f1(them.live)}, ${myLeft} vs ${oppLeft} players left (proj. ${f1(projOf(me))}–${f1(projOf(them))}).`);
+  } else if (pair && gameDone && me && them) lines.push(`${me.live >= them.live ? "Beat" : "Lost to"} <b>${nm(opp)}</b> ${f1(me.live)}–${f1(them.live)}.`);
+  if (pw != null && pl != null && Math.abs(pw - pl) >= 0.02) chips.push([mode === "race" ? "If they win" : "Title odds with a win", pw], [mode === "race" ? "If they lose" : "With a loss", pl]);
+  if (pt != null && pb != null && Math.abs(pt - pb) >= 0.08) chips.push([`Top-half score`, pt], [`Bottom half`, pb]);
+  let bestH = null;
+  pairs.forEach((pr, j) => { if (j === k) return; const a = cp(c, "P" + j + "a"), b = cp(c, "P" + j + "b"); if (a == null || b == null) return;
+    const d = a - b; if (!bestH || Math.abs(d) > Math.abs(bestH.d)) bestH = { j, d, a, b, pr }; });
+  if (bestH && Math.abs(bestH.d) >= (mode === "race" ? 0.08 : 0.015)) {
+    const [x, y] = bestH.d > 0 ? bestH.pr : [bestH.pr[1], bestH.pr[0]], hi = Math.max(bestH.a, bestH.b), lo = Math.min(bestH.a, bestH.b);
+    const xt = wk?.teams[x], yt = wk?.teams[y], doneXY = xt && yt && !xt.items.length && !yt.items.length;
+    if (!doneXY) lines.push(`Root for <b>${nm(x)}</b> over <b>${nm(y)}</b>: ${mode === "race" ? "playoff" : "title"} odds ${fpw(hi)} vs ${fpw(lo)}.`);
+  }
+  if (mode === "race" && wc && p > 0.0005 && p < 0.9995 && o.make > 0 && o.seeds[res.P - 1] / o.make >= 0.3) {
+    const tk = Object.entries(takers[i]).sort((a, b) => b[1] - a[1])[0], misses = Object.values(takers[i]).reduce((s, v) => s + v, 0);
+    if (tk && misses && tk[1] / misses >= 0.5 && +tk[0] !== i) {
+      const t = +tk[0], myPF = base[i].pf + (me?.live || 0), tPF = base[t].pf + (wk?.teams[t]?.live || 0), gap = tPF - myPF;
+      const myRest = me ? projOf(me) - me.live : 0, tRest = wk?.teams[t] ? projOf(wk.teams[t]) - wk.teams[t].live : 0;
+      lines.push(gap > 0 ? `Wildcard race vs <b>${nm(t)}</b>: down ${f1(gap)} PF, so needs to outscore them by ${f1(gap)}+ the rest of the way (proj. +${f1(myRest)} vs +${f1(tRest)}).`
+        : `Wildcard race vs <b>${nm(t)}</b>: up ${f1(-gap)} PF (proj. +${f1(myRest)} vs +${f1(tRest)} still to come).`);
+    }
+  }
+  if (me && me.items.length) lines.push(`Still playing: ${me.items.slice().sort((a, b) => b.mu - a.mu).slice(0, 3).map(x => `${esc(x.name)} (${f1(x.mu)})`).join(", ")}${me.items.length > 3 ? ` +${me.items.length - 3} more` : ""}.`);
+  return { p, head, lines, chips, label };
+}
+
+function renderNeeds(res, mode, ids, wk) {
+  if (mode === "none") { $("needs").hidden = true; return; }
+  const list = ids.filter(i => { const p = mode === "race" ? res.O[i].make : res.O[i].champ; return p > 0.0005 && p < (mode === "race" ? 0.995 : 0.9995); })
+    .sort((a, b) => (mode === "race" ? res.O[b].make - res.O[a].make : res.O[b].champ - res.O[a].champ));
+  if (!list.length || (mode !== "race" && !wk?.pairs.length)) { $("needs").hidden = true; return; }
+  $("needs").hidden = false;
+  $("nTitle").textContent = mode === "race" ? "What each team needs" : "Paths to the title";
+  $("nCap").textContent = mode === "race" ? `${list.length} teams still in the hunt` : "Live, from every simulated finish";
+  $("needGrid").innerHTML = list.map(i => {
+    const n = needsFor(i, res, mode, wk);
+    const [hiT, midT] = mode === "race" ? [0.75, 0.4] : [0.3, 0.12];
+    const tone = n.p >= hiT ? "var(--fav)" : n.p >= midT ? "var(--y)" : "var(--dog)";
+    return `<article class="card need" style="--tone:${tone}"><div class="nh">${mono(i, "lg")}<div class="nt"><div class="n">${nm(i)}</div><div class="hd">${esc(n.head)}</div></div>
+      <div class="np"><span ${anim("n" + i, n.p, "pw")}>${fpw(n.p)}</span><small>${n.label}</small></div></div>
+      ${n.chips.length ? `<div class="chips">${n.chips.map(([t, v], j) => `<span class="chip"><small>${t}</small><b ${anim("c" + i + "_" + j, v, "pw")}>${fpw(v)}</b></span>`).join("")}</div>` : ""}
+      <ul>${n.lines.map(l => `<li>${l}</li>`).join("")}</ul></article>`;
+  }).join("");
 }
 
 // ---------- render ----------
@@ -194,33 +308,53 @@ function renderTicker(wk, wp, labels) {
     const ta = wk.teams[a], tb = wk.teams[b], done = !ta.items.length && !tb.items.length, p = wp[a + "-" + b] ?? 0.5;
     const cls = (x, y) => done ? (x.live >= y.live ? "w" : "l") : "";
     return `<div class="tk"><div class="h">${done ? "FINAL" : Math.round(Math.max(p, 1 - p) * 100) + "% " + esc(code(p >= .5 ? a : b))}</div>
-      <span class="${cls(ta, tb)}">${esc(code(a))}</span><span class="s ${cls(ta, tb)}">${f1(ta.live)}</span><span class="${cls(tb, ta)}">${esc(code(b))}</span><span class="s ${cls(tb, ta)}">${f1(tb.live)}</span></div>`;
+      <span class="${cls(ta, tb)}">${esc(code(a))}</span><span class="s ${cls(ta, tb)}" ${anim("tk" + a, ta.live, "pts")}>${f1(ta.live)}</span><span class="${cls(tb, ta)}">${esc(code(b))}</span><span class="s ${cls(tb, ta)}" ${anim("tk" + b, tb.live, "pts")}>${f1(tb.live)}</span></div>`;
   }).join("");
 }
 
+function renderTitleBar(res, ids) {
+  const list = ids.filter(i => res.O[i].champ > 0.0005).sort((a, b) => res.O[b].champ - res.O[a].champ);
+  if (!list.length) { $("titlebar").hidden = true; return; }
+  $("titlebar").hidden = false;
+  $("tbBar").innerHTML = list.map(i => { const p = res.O[i].champ;
+    return `<div class="seg2" style="flex:${p} 1 0;background:${color(i)}" title="${nm(i)}: ${fp(p)}">${p >= 0.09 ? `${mono(i, "sm")}<b>${fp(p)}</b>` : ""}</div>`; }).join("");
+  $("tbLegend").innerHTML = list.map(i => `<span>${mono(i, "xs")}${nm(i)} <b ${anim("tb" + i, res.O[i].champ)}>${fp(res.O[i].champ)}</b></span>`).join("");
+}
+
 function renderKPIs(res, mode, alive, wk) {
-  const ids = Object.keys(res.O).map(Number), fav = ids.sort((a, b) => res.O[b].champ - res.O[a].champ)[0];
+  const ids = Object.keys(res.O).map(Number), fav = ids.slice().sort((a, b) => res.O[b].champ - res.O[a].champ)[0];
   const k = [];
-  k.push(`<div class="kpi">${mono(fav)}<div><div class="k">Title favorite</div><div class="v">${fp(res.O[fav].champ)}</div><div class="d">${esc(T[fav].name)} · ${amer(res.O[fav].champ)}</div></div></div>`);
+  k.push(`<div class="kpi">${mono(fav)}<div><div class="k">Title favorite</div><div class="v" ${anim("kf", res.O[fav].champ)}>${fp(res.O[fav].champ)}</div><div class="d">${nm(fav)} · ${amer(res.O[fav].champ)}</div></div></div>`);
   if (mode === "race" && alive.length) {
     const open = res.P - ids.filter(i => res.O[i].make >= 0.9995).length;
     k.push(`<div class="kpi"><div><div class="k">Playoff race</div><div class="v">${open} spot${open === 1 ? "" : "s"} left</div><div class="d">${alive.length} teams still alive</div></div></div>`);
   } else {
     const first = hist[0] && hist[0].m;
     let mv = null; if (first) for (const i of ids) { const d = res.O[i].champ - (first[i] ?? res.O[i].champ); if (!mv || Math.abs(d) > Math.abs(mv.d)) mv = { i, d }; }
-    k.push(mv && Math.abs(mv.d) >= 0.02 ? `<div class="kpi">${mono(mv.i)}<div><div class="k">Biggest mover</div><div class="v" style="color:${mv.d > 0 ? "var(--fav)" : "var(--dog)"}">${mv.d > 0 ? "▲" : "▼"} ${Math.round(Math.abs(mv.d) * 100)} pts</div><div class="d">${esc(T[mv.i].name)} since ${tFmt(hist[0].t)}</div></div></div>`
+    k.push(mv && Math.abs(mv.d) >= 0.02 ? `<div class="kpi">${mono(mv.i)}<div><div class="k">Biggest mover</div><div class="v" style="color:${mv.d > 0 ? "var(--fav)" : "var(--dog)"}">${mv.d > 0 ? "▲" : "▼"} ${Math.round(Math.abs(mv.d) * 100)} pts</div><div class="d">${nm(mv.i)} since ${tFmt(hist[0].t)}</div></div></div>`
       : `<div class="kpi"><div><div class="k">Field</div><div class="v">${res.P} teams</div><div class="d">${res.byes ? res.byes + " first-round byes" : "Single elimination"}</div></div></div>`);
   }
   if (wk && wk.pairs.length) {
     const open = wk.pairs.filter(([a, b]) => wk.teams[a].items.length || wk.teams[b].items.length);
     const close = open.map(([a, b]) => ({ a, b, p: res.wp[a + "-" + b] ?? .5 })).sort((x, y) => Math.abs(x.p - .5) - Math.abs(y.p - .5))[0];
-    k.push(close ? `<div class="kpi"><div><div class="k">Closest matchup</div><div class="v">${Math.round(Math.max(close.p, 1 - close.p) * 100)}–${Math.round(Math.min(close.p, 1 - close.p) * 100)}</div><div class="d">${esc(T[close.a].name)} vs ${esc(T[close.b].name)}</div></div></div>`
+    k.push(close ? `<div class="kpi"><div><div class="k">Closest matchup</div><div class="v">${Math.round(Math.max(close.p, 1 - close.p) * 100)}–${Math.round(Math.min(close.p, 1 - close.p) * 100)}</div><div class="d">${nm(close.a)} vs ${nm(close.b)}</div></div></div>`
       : `<div class="kpi"><div><div class="k">This week</div><div class="v">All final</div><div class="d">${wk.pairs.length} matchups complete</div></div></div>`);
   }
   $("kpis").innerHTML = k.join("");
 }
 
-function renderTable(res, mode, alive) {
+function detailRow(i, res, mode, wk, span) {
+  const o = res.O[i], t = wk?.teams[i], rounds = res.maxR || 3;
+  const later = Array.from({ length: rounds - 1 }, (_, r) => [r + 2 === rounds ? "Make final" : "Reach round " + (r + 2), o.reach[r + 2] || 0]);
+  const steps = mode === "race" ? [["Make playoffs", o.make], ...(res.byes ? [["First-round bye", o.bye]] : []), ...later, ["Win title", o.champ]] : [...later, ["Win title", o.champ]];
+  const seeds = mode === "race" && o.make > 0.0005 ? `<div class="dsec"><div class="dh">Seed chances</div><div class="seeds">${o.seeds.map((p, s) => `<div><span style="height:${Math.max(2, p * 46)}px"></span><b>${s + 1}</b><small>${p >= .005 ? Math.round(p * 100) + "%" : ""}</small></div>`).join("")}</div></div>` : "";
+  const players = t ? `<div class="dsec"><div class="dh">This week · ${f1(t.live)} pts${t.items.length ? `, proj. ${f1(projOf(t))}` : ", done"}</div>${t.items.length ? `<ul class="pl">${t.items.slice().sort((a, b) => b.mu - a.mu).map(x => `<li><span>${esc(x.name)} <small>${esc(x.pos)} · ${esc(x.nfl)}${x.f < 1 ? " · " + Math.round(x.f * 100) + "% of game left" : ""}</small></span><b>+${f1(x.mu)}</b></li>`).join("")}</ul>` : `<p class="muted">Every starter has finished.</p>`}</div>` : "";
+  return `<tr class="detail" data-for="${i}"${openRows.has(i) ? "" : " hidden"}><td colspan="${span}"><div class="dwrap">
+    <div class="dsec"><div class="dh">Path to the title</div><div class="path">${steps.map(([l, p]) => `<div><small>${l}</small><div class="track"><i style="width:${p * 100}%"></i></div><b>${fpw(p)}</b></div>`).join("")}</div></div>
+    ${seeds}${players}</div></td></tr>`;
+}
+
+function renderTable(res, mode, alive, wk) {
   const { O, base } = res, raceAlive = mode === "race" && alive.length;
   const metric = i => raceAlive ? O[i].make : O[i].champ;
   let ids = Object.keys(O).map(Number);
@@ -230,7 +364,7 @@ function renderTable(res, mode, alive) {
   const cols = mode === "race" ? ["Make playoffs", "First-round bye", "Make final", "Win title", "Title odds"] : ["Make final", "Win title", "Title odds"];
   const hideIdx = mode !== "race" ? [] : raceAlive ? [1, 2] : [0, 1];
   $("fHead").innerHTML = `<tr><th></th><th>Team</th>${cols.map((c, k) => `<th class="${hideIdx.includes(k) ? "hide-s" : ""}${k === cols.length - 1 ? " oc" : ""}">${c}</th>`).join("")}</tr>`;
-  const cutAt = raceAlive ? res.P : -1;
+  const cutAt = raceAlive ? res.P : -1, span = cols.length + 2;
   $("fBody").innerHTML = ids.map((i, k) => {
     const o = O[i], b = base[i];
     const recTxt = o.wMin === o.wMax && mode === "race" ? `${o.wMin}-${b.w + b.l + res.gpw - o.wMin}` : `${b.w}-${b.l}`;
@@ -238,20 +372,27 @@ function renderTable(res, mode, alive) {
     const seed = mode === "race" ? o.seeds.indexOf(Math.max(...o.seeds)) + 1 : 0;
     const sub = `${recTxt}${b.t ? "-" + b.t : ""} · ${f1(b.pf + (res.wkLive?.[i] ?? 0))} PF${mode === "race" && o.make >= 0.5 ? ` · ${o.make >= 0.9995 ? "" : "proj. "}${ord(seed)} seed` : ""}`;
     const cells = mode === "race" ? [o.make, o.bye, o.final, o.champ] : [o.final, o.champ];
+    const keys = mode === "race" ? ["mk", "by", "fn", "ch"] : ["fn", "ch"];
     const out = mode === "race" ? o.make <= 0.0005 : o.champ <= 0.0005 && o.final <= 0.0005;
-    return `<tr class="${out ? "out" : ""}${k === cutAt ? " cut" : ""}"><td class="rk">${k + 1}</td>
-      <td class="tm"><div class="team">${mono(i)}<div style="min-width:0"><div class="n">${esc(T[i].name)}${d ? `<span class="dl ${d > 0 ? "up" : "dn"}">${d > 0 ? "▲" : "▼"}${Math.abs(d)}</span>` : ""}</div><div class="r">${sub}</div></div></div></td>
-      ${cells.map((p, c) => `<td class="${hideIdx.includes(c) ? "hide-s" : ""}">${heat(p)}</td>`).join("")}
-      <td class="oc"><span class="odds${o.champ >= 0.5 ? " fav" : ""}">${amer(o.champ)}</span></td></tr>`;
+    return `<tr class="row${out ? " out" : ""}${k === cutAt ? " cut" : ""}${openRows.has(i) ? " open" : ""}" data-id="${i}" tabindex="0" aria-expanded="${openRows.has(i)}"><td class="rk">${k + 1}</td>
+      <td class="tm"><div class="team">${mono(i)}<div style="min-width:0"><div class="n">${nm(i)}${d ? `<span class="dl ${d > 0 ? "up" : "dn"}">${d > 0 ? "▲" : "▼"}${Math.abs(d)}</span>` : ""}</div><div class="r">${sub}</div></div><span class="chev" aria-hidden="true">▾</span></div></td>
+      ${cells.map((p, c) => `<td class="${hideIdx.includes(c) ? "hide-s" : ""}">${heat(p, keys[c] + i)}</td>`).join("")}
+      <td class="oc"><span class="odds${o.champ >= 0.5 ? " fav" : ""}">${amer(o.champ)}</span></td></tr>${detailRow(i, res, mode, wk, span)}`;
   }).join("");
-  $("fTitle").textContent = raceAlive ? "Playoff odds" : mode === "race" ? "Championship odds" : "Championship odds";
-  $("fCap").textContent = `${C.sims.toLocaleString()} simulations${first ? " · ▲▼ change since " + tFmt(hist[0].t) : ""}`;
+  $("fTitle").textContent = raceAlive ? "Playoff odds" : "Championship odds";
+  $("fCap").textContent = `Tap a team for details · ${C.sims.toLocaleString()} simulations${first ? " · ▲▼ since " + tFmt(hist[0].t) : ""}`;
+}
+$("fBody").addEventListener("click", e => toggleRow(e.target.closest("tr.row")));
+$("fBody").addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { const r = e.target.closest("tr.row"); if (r) { e.preventDefault(); toggleRow(r); } } });
+function toggleRow(r) {
+  if (!r) return; const id = +r.dataset.id, d = r.nextElementSibling, open = !openRows.has(id);
+  open ? openRows.add(id) : openRows.delete(id); r.classList.toggle("open", open); r.setAttribute("aria-expanded", open); if (d) d.hidden = !open;
 }
 
 function renderBracket(res, br, mode, liveWk, round, seedOf, decided) {
   if (!br) { $("bracket").hidden = true; return; }
   $("bracket").hidden = false;
-  const { O, maxR } = res, rounds = Math.max(...br.map(m => m.r));
+  const { O } = res, rounds = Math.max(...br.map(m => m.r));
   const names = r => r === rounds ? "Championship" : r === rounds - 1 ? "Semifinals" : r === 1 ? "First round" : "Round " + r;
   const cols = [];
   for (let r = 1; r <= rounds; r++) {
@@ -264,7 +405,7 @@ function renderBracket(res, br, mode, liveWk, round, seedOf, decided) {
         const o = O[t], adv = r === rounds ? o.champ : (o.reach[r + 1] || 0);
         const pTxt = isLive ? `${f1(liveWk.teams[t].live)} · ${Math.round((first ? pg : 1 - pg) * 100)}%` : m.w ? (m.w === t ? "W" : "L") : fp(adv);
         const cls = m.w ? (m.w === t ? "win" : "lose") : "";
-        return `<div class="slot ${cls}"><span class="sd">${seedOf[t] || ""}</span>${mono(t)}<span class="n">${esc(T[t].name)}</span><span class="p">${pTxt}</span></div>`;
+        return `<div class="slot ${cls}"><span class="sd">${seedOf[t] || ""}</span>${mono(t, "sm")}<span class="n">${nm(t)}</span><span class="p">${pTxt}</span></div>`;
       };
       return `<div class="match${r === rounds ? " champ" : ""}">${isLive ? '<span class="tag">LIVE</span>' : ""}${slot(m.t1, m.t1_from, true)}${slot(m.t2, m.t2_from, false)}</div>`;
     }).join("")}</div>`);
@@ -290,15 +431,18 @@ function needle(p, ca, cb) {
 function renderGames(wk, res, title, labels) {
   if (!wk || !wk.pairs.length) { $("matchups").hidden = true; return; }
   $("matchups").hidden = false; $("mTitle").textContent = title;
-  $("games").innerHTML = wk.pairs.map(([a, b], k) => {
-    const ta = wk.teams[a], tb = wk.teams[b], done = !ta.items.length && !tb.items.length;
-    const p = done ? (ta.live >= tb.live ? 1 : 0) : (res.wp[a + "-" + b] ?? .5);
+  const order = wk.pairs.map((p, k) => ({ p, k, done: !wk.teams[p[0]].items.length && !wk.teams[p[1]].items.length })).sort((a, b) => a.done - b.done);
+  $("games").innerHTML = order.map(({ p: [a, b], k, done }) => {
+    const ta = wk.teams[a], tb = wk.teams[b];
+    if (done) return `<div class="card mu fin"><div class="top2"><span>${labels ? labels[k] : "Matchup " + (k + 1)}</span><span>Final</span></div>
+      ${[[a, ta, tb], [b, tb, ta]].map(([id, t, u]) => `<div class="fr${t.live >= u.live ? " w" : ""}">${mono(id, "sm")}<span class="n">${nm(id)}</span><b>${f1(t.live)}</b></div>`).join("")}</div>`;
+    const p = res.wp[a + "-" + b] ?? .5;
     const pa = projOf(ta), pb = projOf(tb), favA = pa >= pb, sp = half(Math.abs(pa - pb));
-    const side = (id, t, pr, pj, cls) => `<div class="side ${cls}"><span class="n">${esc(T[id].name)}</span><span class="sc">${f1(t.live)}</span><span class="pj">${t.items.length ? `proj ${f1(pj)} · ${t.items.length} left` : "done"}</span></div>`;
-    return `<div class="card mu"><div class="top2"><span>${labels ? labels[k] : "Matchup " + (k + 1)}</span><span class="${done ? "" : "lv"}">${done ? "Final" : "Win probability"}</span></div>
+    const side = (id, t, pj, cls) => `<div class="side ${cls}"><span class="n">${nm(id)}</span><span class="sc" ${anim("gs" + id, t.live, "pts")}>${f1(t.live)}</span><span class="pj">${t.items.length ? `proj ${f1(pj)} · ${t.items.length} left` : "done"}</span></div>`;
+    return `<div class="card mu"><div class="top2"><span>${labels ? labels[k] : "Matchup " + (k + 1)}</span><span class="lv">Win probability</span></div>
       ${needle(p, color(a), color(b))}
-      <div class="vs">${side(a, ta, p, pa, "a")}<div class="mid">${done ? "FINAL" : Math.round(Math.max(p, 1 - p) * 100) + "%<br><span style='font-weight:600;font-size:11px'>" + esc(code(p >= .5 ? a : b)) + "</span>"}</div>${side(b, tb, 1 - p, pb, "b")}</div>
-      ${done ? "" : `<div class="line"><span>Spread <b>${esc(code(favA ? a : b))} −${sp}</b></span><span>O/U <b>${half(pa + pb)}</b></span><span>ML <b>${esc(code(a))} ${amer(p)}</b> / <b>${esc(code(b))} ${amer(1 - p)}</b></span></div>`}</div>`;
+      <div class="vs">${side(a, ta, pa, "a")}<div class="mid"><span ${anim("gp" + a + "-" + b, Math.max(p, 1 - p))}>${fp(Math.max(p, 1 - p))}</span><br><span style='font-weight:600;font-size:11px'>${esc(code(p >= .5 ? a : b))}</span></div>${side(b, tb, pb, "b")}</div>
+      <div class="line"><span>Spread <b>${esc(code(favA ? a : b))} −${sp}</b></span><span>O/U <b>${half(pa + pb)}</b></span><span>ML <b>${esc(code(a))} ${amer(p)}</b> / <b>${esc(code(b))} ${amer(1 - p)}</b></span></div></div>`;
   }).join("");
 }
 
@@ -317,7 +461,7 @@ function renderTrend(ids, heading) {
     svg.innerHTML = g;
   };
   draw(); (svg._ro ||= new ResizeObserver(draw)).observe(svg);
-  $("legend").innerHTML = ids.map(id => `<span style="--c:${color(id)}">${esc(T[id].name)}</span>`).join("");
+  $("legend").innerHTML = ids.map(id => `<span style="--c:${color(id)}">${nm(id)}</span>`).join("");
 }
 
 // ---------- main ----------
@@ -326,7 +470,9 @@ async function refresh() {
   try {
     const [L, users, R, st] = await Promise.all([get(`${S}/league/${C.leagueId}`), get(`${S}/league/${C.leagueId}/users`), get(`${S}/league/${C.leagueId}/rosters`), get(`${S}/state/nfl`)]);
     const U = {}; users.forEach(u => U[u.user_id] = u);
-    T = {}; R.forEach(r => { const u = U[r.owner_id] || {}; T[r.roster_id] = { name: (u.metadata && u.metadata.team_name) || u.display_name || "Team " + r.roster_id }; });
+    T = {}; R.forEach(r => { const u = U[r.owner_id] || {}, md = u.metadata || {};
+      const img = /^https?:\/\//.test(md.avatar || "") ? md.avatar : u.avatar ? `https://sleepercdn.com/avatars/thumbs/${u.avatar}` : null;
+      T[r.roster_id] = { name: md.team_name || u.display_name || "Team " + r.roster_id, img }; });
     $("lg").textContent = L.name.toUpperCase().slice(0, 8);
     document.title = `${L.name} Playoff Forecast`;
     const pws = L.settings.playoff_week_start, lastReg = pws - 1, lastScored = L.settings.last_scored_leg || 0;
@@ -351,12 +497,12 @@ async function refresh() {
       const br = brAll.filter(m => !m.p || m.p === 1).sort((a, b) => a.r - b.r || a.m - b.m);
       const maxR = Math.max(...br.map(m => m.r)), round = Math.min(maxR, Math.max(1, curWeek - pws + 1));
       wkShown = await liveWeek(L, pws + round - 1);
-      const inBr = new Set(br.flatMap(m => [m.t1, m.t2]).filter(Boolean));
-      wkShown = { ...wkShown, pairs: br.filter(m => m.r === round && m.t1 && m.t2 && wkShown.teams[m.t1] && wkShown.teams[m.t2]).map(m => [m.t1, m.t2]) };
-      labels = br.filter(m => m.r === round && m.t1 && m.t2 && wkShown.teams[m.t1] && wkShown.teams[m.t2]).map(m => m.p === 1 ? "Championship" : "Game " + m.m);
+      const live = br.filter(m => m.r === round && m.t1 && m.t2 && wkShown.teams[m.t1] && wkShown.teams[m.t2]);
+      wkShown = { ...wkShown, pairs: live.map(m => [m.t1, m.t2]) };
+      labels = live.map(m => m.p === 1 ? "Championship" : "Game " + m.m);
       loadHist(`jffl2:${C.leagueId}:${L.season}:w${wkShown.week}`);
       res = simulate(L, R, mode, null, br, wkShown, round);
-      res.br = br; res.round = round; res.inBr = inBr;
+      res.br = br; res.round = round;
       $("eyebrow").textContent = `${L.season} playoffs · ${round >= maxR ? "Championship week" : "Round " + round} · Week ${wkShown.week}`;
     }
     res.wkLive = wkShown ? Object.fromEntries(Object.entries(wkShown.teams).map(([k, v]) => [k, v.live])) : {};
@@ -365,12 +511,10 @@ async function refresh() {
     const prevM = hist.length ? hist[hist.length - 1].m : null;
     const newM = Object.fromEntries(ids.map(i => [i, metricOf(i)]));
     pushHist({ t: Date.now(), m: newM });
-    // sound cues: biggest odds swing since the last refresh, newly final matchups, new points
     let swing = 0; if (prevM) for (const i of ids) { const d = newM[i] - (prevM[i] ?? newM[i]); if (Math.abs(d) >= 0.10 && Math.abs(d) > Math.abs(swing)) swing = d; }
     const finalsNow = new Set((wkShown?.pairs || []).filter(([a, b]) => !wkShown.teams[a].items.length && !wkShown.teams[b].items.length).map(p => p.join("-")));
     const newFinals = prevFinals ? [...finalsNow].filter(k => !prevFinals.has(k)).length : 0; prevFinals = finalsNow;
 
-    // standings-based seeds for display
     const { base } = standings(L, R);
     const W = {}, PF = {}; ids.forEach(i => { W[i] = base[i].w; PF[i] = base[i].pf; });
     const seedOf = {};
@@ -379,13 +523,16 @@ async function refresh() {
     $("title").textContent = mode === "race" ? (alive.length ? "Playoff Forecast" : "Championship Forecast") : "Championship Forecast";
     renderTicker(wkShown, res.wp, labels);
     renderKPIs(res, mode, alive, wkShown);
-    renderTable(res, mode, alive);
+    renderTitleBar(res, ids);
+    renderNeeds(res, mode === "race" ? (alive.length ? "race" : "none") : "playoffs", ids, wkShown);
+    renderTable(res, mode, alive, wkShown);
     renderBracket(res, mode === "race" ? (res.field ? seedBracket(res.field) : null) : res.br, mode, wkShown, res.round, seedOf, mode === "race" && !alive.length);
     renderGames(wkShown, res, mode === "race" ? `Week ${wkShown?.week ?? ""} matchups` : "Live games", labels);
     const contenders = ids.filter(i => metricOf(i) > 0.0005);
     const ever = [...new Set(hist.flatMap(h => Object.keys(h.m || {}).filter(i => h.m[i] > 0.0005 && (mode !== "race" || !alive.length || h.m[i] < 0.9995))))].map(Number);
     renderTrend((ever.length ? ever : contenders).filter(i => T[i]), mode === "race" && alive.length ? "Playoff odds over time" : "Title odds over time");
     $("rules").textContent = `Rules modeled: seeds 1–${P - wc} by record (PF breaks ties)${wc ? `; ${wc === 1 ? "seed " + P + " goes" : "the last " + wc + " seeds go"} to the highest PF among the rest` : ""}.${res.med ? " Each week the top half of scorers gets an extra win." : ""}${res.byes ? ` Top ${res.byes} seeds get a first-round bye.` : ""}`;
+    animateAll();
 
     anyLive = !!(wkShown && wkShown.live && wkShown.live.length);
     const sig = wkShown ? Object.values(wkShown.teams).map(t => t.live).join(",") : "";
