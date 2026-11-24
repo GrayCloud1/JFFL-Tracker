@@ -566,6 +566,55 @@ function trackPlays(wk, wp) {
   prevPP = nowPP; saveImp();
 }
 
+// ---------- hall of champions ----------
+// Past champions come from Sleeper (this league's previous seasons) plus any older ones in config.js.
+let CHAMPS = null, champsBusy = false;
+const avatarOf = u => { const md = u.metadata || {}; return /^https?:\/\//.test(md.avatar || "") ? md.avatar : u.avatar ? `https://sleepercdn.com/avatars/thumbs/${u.avatar}` : null; };
+async function loadChamps(L) {
+  if (CHAMPS || champsBusy) return; champsBusy = true;
+  const key = `jfflchamps:${C.leagueId}`; let list = null;
+  try { const c = JSON.parse(localStorage.getItem(key) || "null"); if (c && Date.now() - c.t < 864e5) list = c.list; } catch {}
+  if (!list) {
+    list = [];
+    let id = L.status === "complete" ? L.league_id : L.previous_league_id;
+    for (let k = 0; k < 15 && id && id !== "0"; k++) {
+      try {
+        const lg = await get(`${S}/league/${id}`);
+        if (lg.status === "complete") {
+          const f = (await get(`${S}/league/${id}/winners_bracket`) || []).find(m => m.p === 1);
+          if (f && f.w) {
+            const [R, U] = await Promise.all([get(`${S}/league/${id}/rosters`), get(`${S}/league/${id}/users`)]);
+            const r = R.find(x => x.roster_id === f.w), u = U.find(x => x.user_id === r?.owner_id) || {};
+            list.push({ season: lg.season, team: String((u.metadata || {}).team_name || u.display_name || "Champion").trim(), user: u.display_name || "", img: avatarOf(u) });
+          }
+        }
+        id = lg.previous_league_id;
+      } catch { break; }
+    }
+    try { localStorage.setItem(key, JSON.stringify({ t: Date.now(), list })); } catch {}
+  }
+  const extra = (C.pastChampions || []).filter(e => !list.some(x => String(x.season) === String(e.season)));
+  CHAMPS = [...list, ...extra].sort((a, b) => a.season - b.season);
+  champsBusy = false; renderChamps(L);
+}
+const SIL = `<svg viewBox="0 0 100 100" aria-hidden="true"><defs><linearGradient id="silg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a424c"/><stop offset="1" stop-color="#14181d"/></linearGradient></defs><circle cx="50" cy="38" r="17" fill="url(#silg)"/><path d="M18 92c2-20 15-31 32-31s30 11 32 31z" fill="url(#silg)"/></svg>`;
+function renderChamps(L) {
+  if (!CHAMPS || !CHAMPS.length) { $("champs").hidden = true; return; }
+  $("champs").hidden = false;
+  const av = (c, cls) => `<div class="av ${cls || ""}" style="background:${PAL[(+c.season) % PAL.length]}">${esc(initials(c.team))}${c.img ? `<img src="${esc(c.img)}" alt="" loading="lazy" onerror="this.remove()">` : ""}</div>`;
+  const past = CHAMPS.slice(0, -1), reign = CHAMPS[CHAMPS.length - 1], open = L.status !== "complete";
+  $("hofRow").innerHTML = past.map(c => `<div class="hof past">${av(c)}<span class="yr">${esc(c.season)}</span><b title="${esc(c.team)}">${esc(c.team)}</b><small>${esc(c.user)}</small></div>`).join("")
+    + `<div class="hof reign" id="hofReign"><span class="crown" aria-hidden="true">\u{1F451}</span>${av(reign, "lg")}<span class="yr">${esc(reign.season)}</span><span class="tag">Reigning champ</span><b title="${esc(reign.team)}">${esc(reign.team)}</b><small>${esc(reign.user)}</small></div>`
+    + (open ? `<div class="hof lock"><div class="av lg sil">${SIL}<span>?</span></div><span class="yr">${esc(L.season)}</span><span class="tag">Up for grabs</span><b>???</b><small id="hofFav"></small></div>` : "");
+  $("hCap").textContent = `${CHAMPS.length} champion${CHAMPS.length === 1 ? "" : "s"} since ${CHAMPS[0].season}`;
+  const row = $("hofRow"), r = $("hofReign"); if (row.scrollWidth > row.clientWidth) row.scrollLeft = r.offsetLeft - (row.clientWidth - r.offsetWidth) / 2;
+}
+function setChampFav(res) {
+  const el = $("hofFav"); if (!el) return;
+  const ids = Object.keys(res.O).map(Number), fav = ids.sort((a, b) => res.O[b].champ - res.O[a].champ)[0];
+  el.textContent = fav != null && res.O[fav].champ > 0.0005 ? `Favorite: ${code(fav)} ${fp(res.O[fav].champ)}` : "";
+}
+
 // ---------- main ----------
 // Refresh fast while NFL games are live, slowly otherwise, and not at all while the page is hidden
 // (phone locked, another app or tab in front) so idle phones don't burn battery.
@@ -655,6 +704,7 @@ async function refresh() {
     renderTrend((ever.length ? ever : contenders).filter(i => T[i]), mode === "race" && alive.length ? "Playoff odds over time" : "Title odds over time");
     $("rules").textContent = `Rules modeled: seeds 1–${P - wc} by record (PF breaks ties)${wc ? `; ${wc === 1 ? "seed " + P + " goes" : "the last " + wc + " seeds go"} to the highest PF among the rest` : ""}.${res.med ? " Each week the top half of scorers gets an extra win." : ""}${res.byes ? ` Top ${res.byes} seeds get a first-round bye.` : ""}`;
     animateAll();
+    if (CHAMPS) setChampFav(res); else loadChamps(L).then(() => setChampFav(res)).catch(() => {});
 
     anyLive = !!(wkShown && wkShown.live && wkShown.live.length);
     const sig = wkShown ? Object.values(wkShown.teams).map(t => t.live).join(",") : "";
