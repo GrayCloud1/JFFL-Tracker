@@ -67,11 +67,6 @@ body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 Inter,system-
 h1{font:800 clamp(30px,4.6vw,46px)/1.05 "Barlow Condensed";margin:6px 0 6px;letter-spacing:-.005em}
 .meta{font-size:13px;color:var(--mute)}
 .meta b{color:var(--ink2);font-weight:600}
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:12px;margin:18px 0 6px}
-.kpi{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px;display:flex;gap:12px;align-items:center}
-.kpi .k{font:600 11px Inter;letter-spacing:.06em;text-transform:uppercase;color:var(--mute)}
-.kpi .v{font:800 26px/1.05 "Barlow Condensed"}
-.kpi .d{font-size:13px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* sections */
 section{padding:22px 0 6px}
 .sh{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;border-bottom:2px solid var(--ink);padding-bottom:8px;margin-bottom:14px}
@@ -99,8 +94,7 @@ h2{font:800 24px/1 "Barlow Condensed";margin:0;text-transform:uppercase;letter-s
 .seg2{display:flex;align-items:center;gap:6px;padding:0 8px;color:#fff;min-width:0;overflow:hidden;transition:flex-grow .8s ease}
 .seg2 b{font:800 18px "Barlow Condensed";white-space:nowrap;text-shadow:0 1px 2px #0004}
 .seg2 .mono{box-shadow:0 0 0 2px #fff6}
-.tleg{display:flex;flex-wrap:wrap;gap:8px 18px;padding:12px 2px 0;font-size:13px;color:var(--ink2)}
-.tleg span{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}.tleg b{color:var(--ink)}
+.tbwrap{padding:16px 16px 6px}
 /* needs */
 .ngrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:14px}
 .need{padding:16px;border-top:4px solid var(--tone)}
@@ -179,7 +173,6 @@ h2{font:800 24px/1 "Barlow Condensed";margin:0;text-transform:uppercase;letter-s
 .imp b{color:var(--ink)}.imp .mt{color:var(--mute)}.imp .up{color:var(--fav);font-weight:700}.imp .dn{color:var(--dog);font-weight:700}
 .tdtag{display:inline-block;background:var(--fav);color:#fff;font:800 10px Inter;letter-spacing:.08em;padding:2px 6px;border-radius:3px;margin-right:4px;vertical-align:1px}
 @media(prefers-reduced-motion:no-preference){.imp.new{animation:fu 1.8s ease-out}}
-.kpis{margin:22px 0 0}
 /* hall of champions */
 .hof-row{display:flex;align-items:flex-end;justify-content:safe center;gap:22px;overflow-x:auto;padding:24px 20px 20px;scroll-snap-type:x proximity;scrollbar-width:thin}
 .hof{flex:none;width:112px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:3px;scroll-snap-align:center}
@@ -217,12 +210,12 @@ footer b{color:#fff}
 button{font:600 13px Inter;min-height:36px;padding:0 14px;border:1px solid #3a4047;border-radius:4px;background:transparent;color:#fff;cursor:pointer;justify-self:start}
 button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 [hidden]{display:none!important}
-@media(max-width:700px){.top .wrap{gap:10px}.tabs a{padding:8px 8px}.hide-s{display:none}.tbl td,.tbl th{padding:8px 5px}.tbl th{font-size:10px;letter-spacing:.03em;white-space:normal}.heat{min-width:44px;font-size:13px;padding:5px 4px}.tbl td.rk{width:22px}.team{gap:7px}.team .mono{width:26px;height:26px;font-size:10px}.team .n{max-width:42vw}.team .r{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:42vw}.tbl .oc{display:none}.kpis{grid-template-columns:1fr 1fr}.kpi:first-child{grid-column:1/-1}.kpi{padding:12px}.kpi .v{font-size:22px}}
-@media(max-width:560px){.tabs{display:none}.top .wrap{justify-content:space-between}}
+@media(max-width:700px){.top .wrap{gap:10px}.tabs a{padding:8px 8px}.hide-s{display:none}.tbl td,.tbl th{padding:8px 5px}.tbl th{font-size:10px;letter-spacing:.03em;white-space:normal}.heat{min-width:44px;font-size:13px;padding:5px 4px}.tbl td.rk{width:22px}.team{gap:7px}.team .mono{width:26px;height:26px;font-size:10px}.team .n{max-width:42vw}.team .r{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:42vw}.tbl .oc{display:none}}
+@media(max-width:560px){.top .wrap{flex-wrap:wrap;height:auto;padding-top:8px;padding-bottom:0;row-gap:2px}.tabs{order:3;width:100%;margin:0 -6px;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}.tabs a{padding:8px 10px}html{scroll-padding-top:104px}}
 </style></head><body>
 <header class="top"><div class="wrap">
  <div class="logo"><b id="lg">JFFL</b><span class="hide-s">Playoff Forecast</span></div>
- <nav class="tabs"><a href="#matchups">Matchups</a><a href="#needs">Scenarios</a><a href="#forecast">Odds</a><a href="#bracket">Bracket</a><a href="#champs">Champs</a><a href="#trend">Trends</a></nav>
+ <nav class="tabs"><a href="#matchups">Games</a><a href="#needs">Scenarios</a><a href="#forecast">Odds</a><a href="#bracket">Bracket</a><a href="#champs">Champs</a><a href="#trend">Trends</a></nav>
  <div class="snd">
   <button class="sndb" id="sndBtn" aria-pressed="false" aria-haspopup="true" aria-label="Sound settings" title="Sound"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path class="w" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
   <div class="sndp" id="sndPanel" hidden role="dialog" aria-label="Sound settings">
@@ -251,20 +244,15 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-off
   <div class="meta" id="meta">Connecting to Sleeper…</div>
  </div>
 
- <section id="matchups" hidden><div class="sh"><h2 id="mTitle">Matchups</h2><p>Live win probability · projected line</p></div>
+ <section id="matchups" hidden><div class="sh"><h2 id="mTitle">Matchups</h2><p id="mCap"></p></div>
   <div class="grid" id="games"></div></section>
-
- <div class="kpis" id="kpis"></div>
 
 
  <section id="needs" hidden><div class="sh"><h2 id="nTitle">What each team needs</h2><p id="nCap"></p></div>
   <div class="ngrid" id="needGrid"></div></section>
 
- <section id="titlebar" hidden><div class="sh"><h2>Who wins it all</h2><p>Share of simulated championships</p></div>
-  <div class="card" style="padding:16px"><div class="tbar" id="tbBar" role="img" aria-label="Championship odds by team"></div><div class="tleg" id="tbLegend"></div></div></section>
-
  <section id="forecast"><div class="sh"><h2 id="fTitle">Forecast</h2><p id="fCap"></p></div>
-  <div class="card scrollx"><table class="tbl"><thead id="fHead"></thead><tbody id="fBody"></tbody></table></div></section>
+  <div class="card scrollx"><div class="tbwrap" id="tbWrap" hidden><div class="tbar" id="tbBar" role="img" aria-label="Championship odds by team"></div></div><table class="tbl"><thead id="fHead"></thead><tbody id="fBody"></tbody></table></div></section>
 
  <section id="bracket"><div class="sh"><h2 id="bTitle">Bracket</h2><p id="bCap"></p></div>
   <div class="card bracket" id="bk"></div></section>

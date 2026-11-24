@@ -8,6 +8,8 @@ const ESPN2SLP = { WSH: "WAS", JAC: "JAX" };
 const POS = ["QB", "RB", "WR", "TE", "K", "DEF"].map(p => "position[]=" + p).join("&");
 const PAL = ["#c8102e", "#1f5fbf", "#0a8a5f", "#7b3fbf", "#e07000", "#0f8fa8", "#8a5a2b", "#c2378a", "#6b8a00", "#4a5560", "#b8860b", "#2b3a8f"];
 const REDUCE = matchMedia("(prefers-reduced-motion: reduce)").matches;
+// phones run fewer simulations to save battery; the odds barely change
+const SIMS = matchMedia("(max-width: 700px)").matches || (navigator.hardwareConcurrency || 8) <= 4 ? Math.min(C.sims, 6000) : C.sims;
 const f1 = x => (+x).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const ord = n => { const s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
 const tFmt = (t, sec) => new Date(t).toLocaleTimeString([], sec ? { hour: "numeric", minute: "2-digit", second: "2-digit" } : { hour: "numeric", minute: "2-digit" });
@@ -67,11 +69,12 @@ function pushHist(e) { hist.push(e); if (hist.length > 500) hist = hist.slice(-5
 
 // ---------- data ----------
 async function gameClock(season, week) {
-  const frac = {}, live = [], plays = {};
+  const frac = {}, live = [], plays = {}; let next = null;
   try {
     const e = await get(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${week}&dates=${season}`);
     for (const ev of e.events || []) {
       const st = ev.status, s = st.type.state; let f = 1;
+      if (s === "pre" && ev.date && (!next || ev.date < next)) next = ev.date;
       if (s === "post") f = 0;
       else if (s === "in") {
         const [m, sec] = String(st.displayClock || "0:00").split(":").map(Number);
@@ -88,7 +91,7 @@ async function gameClock(season, week) {
       frac[g.home] = frac[g.away] = f; if (f === 0.5) live.push(`${g.away} @ ${g.home}`);
     }
   }
-  return { frac, live, plays };
+  return { frac, live, plays, next };
 }
 
 async function liveWeek(L, week) {
@@ -115,7 +118,7 @@ async function liveWeek(L, week) {
     });
     teams[m.roster_id] = { live: m.custom_points ?? m.points ?? 0, items, pp, who };
   }
-  return { week, teams, pairs: pairsOf(mus), live: clock.live, plays: clock.plays };
+  return { week, teams, pairs: pairsOf(mus), live: clock.live, plays: clock.plays, next: clock.next };
 }
 
 function pairsOf(mus) {
@@ -178,7 +181,7 @@ function seedField(ids, W, PF, P, wc) {
 // Besides the odds, it records conditional counts ("if this team wins / if that game goes this way")
 // that power the "What each team needs" cards.
 function simulate(L, R, mode, weeks, br, liveWk, round) {
-  const N = C.sims, ids = R.map(r => r.roster_id), P = L.settings.playoff_teams || 6;
+  const N = SIMS, ids = R.map(r => r.roster_id), P = L.settings.playoff_teams || 6;
   const wc = Math.min(C.pfWildcardSpots || 0, P), byes = 2 ** Math.ceil(Math.log2(P)) - P;
   const { base, avg, med } = standings(L, R);
   const O = {}; ids.forEach(i => O[i] = { make: 0, bye: 0, seeds: Array(P).fill(0), reach: {}, final: 0, champ: 0, wMin: 1e9, wMax: -1 });
@@ -332,33 +335,9 @@ function renderTicker(wk, wp, labels) {
 
 function renderTitleBar(res, ids) {
   const list = ids.filter(i => res.O[i].champ > 0.0005).sort((a, b) => res.O[b].champ - res.O[a].champ);
-  if (!list.length) { $("titlebar").hidden = true; return; }
-  $("titlebar").hidden = false;
+  $("tbWrap").hidden = !list.length; if (!list.length) return;
   $("tbBar").innerHTML = list.map(i => { const p = res.O[i].champ;
     return `<div class="seg2" style="flex:${p} 1 0;background:${color(i)}" title="${nm(i)}: ${fp(p)}">${p >= 0.09 ? `${mono(i, "sm")}<b>${fp(p)}</b>` : ""}</div>`; }).join("");
-  $("tbLegend").innerHTML = list.map(i => `<span>${mono(i, "xs")}${nm(i)} <b ${anim("tb" + i, res.O[i].champ)}>${fp(res.O[i].champ)}</b></span>`).join("");
-}
-
-function renderKPIs(res, mode, alive, wk) {
-  const ids = Object.keys(res.O).map(Number), fav = ids.slice().sort((a, b) => res.O[b].champ - res.O[a].champ)[0];
-  const k = [];
-  k.push(`<div class="kpi">${mono(fav)}<div><div class="k">Title favorite</div><div class="v" ${anim("kf", res.O[fav].champ)}>${fp(res.O[fav].champ)}</div><div class="d">${nm(fav)} · ${amer(res.O[fav].champ)}</div></div></div>`);
-  if (mode === "race" && alive.length) {
-    const open = res.P - ids.filter(i => res.O[i].make >= 0.9995).length;
-    k.push(`<div class="kpi"><div><div class="k">Playoff race</div><div class="v">${open} spot${open === 1 ? "" : "s"} left</div><div class="d">${alive.length} teams still alive</div></div></div>`);
-  } else {
-    const first = hist[0] && hist[0].m;
-    let mv = null; if (first) for (const i of ids) { const d = res.O[i].champ - (first[i] ?? res.O[i].champ); if (!mv || Math.abs(d) > Math.abs(mv.d)) mv = { i, d }; }
-    k.push(mv && Math.abs(mv.d) >= 0.02 ? `<div class="kpi">${mono(mv.i)}<div><div class="k">Biggest mover</div><div class="v" style="color:${mv.d > 0 ? "var(--fav)" : "var(--dog)"}">${mv.d > 0 ? "▲" : "▼"} ${Math.round(Math.abs(mv.d) * 100)} pts</div><div class="d">${nm(mv.i)} since ${tFmt(hist[0].t)}</div></div></div>`
-      : `<div class="kpi"><div><div class="k">Field</div><div class="v">${res.P} teams</div><div class="d">${res.byes ? res.byes + " first-round byes" : "Single elimination"}</div></div></div>`);
-  }
-  if (wk && wk.pairs.length) {
-    const open = wk.pairs.filter(([a, b]) => wk.teams[a].items.length || wk.teams[b].items.length);
-    const close = open.map(([a, b]) => ({ a, b, p: res.wp[a + "-" + b] ?? .5 })).sort((x, y) => Math.abs(x.p - .5) - Math.abs(y.p - .5))[0];
-    k.push(close ? `<div class="kpi"><div><div class="k">Closest matchup</div><div class="v">${Math.round(Math.max(close.p, 1 - close.p) * 100)}–${Math.round(Math.min(close.p, 1 - close.p) * 100)}</div><div class="d">${nm(close.a)} vs ${nm(close.b)}</div></div></div>`
-      : `<div class="kpi"><div><div class="k">This week</div><div class="v">All final</div><div class="d">${wk.pairs.length} matchups complete</div></div></div>`);
-  }
-  $("kpis").innerHTML = k.join("");
 }
 
 function detailRow(i, res, mode, wk, span) {
@@ -398,7 +377,7 @@ function renderTable(res, mode, alive, wk) {
       <td class="oc"><span class="odds${o.champ >= 0.5 ? " fav" : ""}">${amer(o.champ)}</span></td></tr>${detailRow(i, res, mode, wk, span)}`;
   }).join("");
   $("fTitle").textContent = raceAlive ? "Playoff odds" : "Championship odds";
-  $("fCap").textContent = `Tap a team for details · ${C.sims.toLocaleString()} simulations${first ? " · ▲▼ since " + tFmt(hist[0].t) : ""}`;
+  $("fCap").textContent = `Tap a team for details · ${SIMS.toLocaleString()} simulations${first ? " · ▲▼ since " + tFmt(hist[0].t) : ""}`;
 }
 $("fBody").addEventListener("click", e => toggleRow(e.target.closest("tr.row")));
 $("fBody").addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { const r = e.target.closest("tr.row"); if (r) { e.preventDefault(); toggleRow(r); } } });
@@ -463,6 +442,8 @@ function impactBox(key) {
 function renderGames(wk, res, title, labels) {
   if (!wk || !wk.pairs.length) { $("matchups").hidden = true; return; }
   $("matchups").hidden = false; $("mTitle").textContent = title;
+  const kick = wk.next ? new Date(wk.next) : null;
+  $("mCap").textContent = wk.live?.length ? "Live win probability · projected line" : kick ? `Next kickoff ${kick.toLocaleDateString([], { weekday: "short" })} ${tFmt(kick)} · win probability from projections` : "Win probability · projected line";
   const order = wk.pairs.map((p, k) => ({ p, k, done: !wk.teams[p[0]].items.length && !wk.teams[p[1]].items.length })).sort((a, b) => a.done - b.done);
   $("games").innerHTML = order.map(({ p: [a, b], k, done }) => {
     const ta = wk.teams[a], tb = wk.teams[b];
@@ -605,14 +586,9 @@ function renderChamps(L) {
   const past = CHAMPS.slice(0, -1), reign = CHAMPS[CHAMPS.length - 1], open = L.status !== "complete";
   $("hofRow").innerHTML = past.map(c => `<div class="hof past">${av(c)}<span class="yr">${esc(c.season)}</span><b title="${esc(c.team)}">${esc(c.team)}</b><small>${esc(c.user)}</small></div>`).join("")
     + `<div class="hof reign" id="hofReign"><span class="crown" aria-hidden="true">\u{1F451}</span>${av(reign, "lg")}<span class="yr">${esc(reign.season)}</span><span class="tag">Reigning champ</span><b title="${esc(reign.team)}">${esc(reign.team)}</b><small>${esc(reign.user)}</small></div>`
-    + (open ? `<div class="hof lock"><div class="av lg sil">${SIL}<span>?</span></div><span class="yr">${esc(L.season)}</span><span class="tag">Up for grabs</span><b>???</b><small id="hofFav"></small></div>` : "");
+    + (open ? `<div class="hof lock"><div class="av lg sil">${SIL}<span>?</span></div><span class="yr">${esc(L.season)}</span><span class="tag">Up for grabs</span><b>???</b></div>` : "");
   $("hCap").textContent = `${CHAMPS.length} champion${CHAMPS.length === 1 ? "" : "s"} since ${CHAMPS[0].season}`;
   const row = $("hofRow"), r = $("hofReign"); if (row.scrollWidth > row.clientWidth) row.scrollLeft = r.offsetLeft - (row.clientWidth - r.offsetWidth) / 2;
-}
-function setChampFav(res) {
-  const el = $("hofFav"); if (!el) return;
-  const ids = Object.keys(res.O).map(Number), fav = ids.sort((a, b) => res.O[b].champ - res.O[a].champ)[0];
-  el.textContent = fav != null && res.O[fav].champ > 0.0005 ? `Favorite: ${code(fav)} ${fp(res.O[fav].champ)}` : "";
 }
 
 // ---------- main ----------
@@ -673,7 +649,7 @@ async function refresh() {
       loadHist(`jffl2:${C.leagueId}:${L.season}:w${rStart}`); loadImp(`jfflimp:${C.leagueId}:${L.season}:w${rStart + wIn - 1}`);
       res = simulate(L, R, mode, null, br, wkShown, round);
       res.br = br; res.round = round;
-      $("eyebrow").textContent = `${L.season} playoffs · ${round >= maxR ? "Championship" : "Round " + round} · ${rLen > 1 ? `Weeks ${rStart}–${rStart + rLen - 1} (week ${wIn} of ${rLen})` : "Week " + rStart}`;
+      $("eyebrow").textContent = `${L.season} playoffs · ${round >= maxR ? "Championship" : "Round " + round} · ${rLen > 1 ? `Week ${wIn} of ${rLen}` : "Week " + rStart}`;
     }
     res.wkLive = wkShown ? Object.fromEntries(Object.entries(wkShown.teams).map(([k, v]) => [k, v.live])) : {};
     const alive = mode === "race" ? ids.filter(i => res.O[i].make > 0.0005 && res.O[i].make < 0.9995) : [];
@@ -693,18 +669,17 @@ async function refresh() {
 
     $("title").textContent = mode === "race" ? (alive.length ? "Playoff Forecast" : "Championship Forecast") : "Championship Forecast";
     renderTicker(wkShown, res.wp, labels);
-    renderKPIs(res, mode, alive, wkShown);
     renderTitleBar(res, ids);
     renderNeeds(res, mode === "race" ? (alive.length ? "race" : "none") : "playoffs", ids, wkShown);
     renderTable(res, mode, alive, wkShown);
     renderBracket(res, mode === "race" ? (res.field ? seedBracket(res.field) : null) : res.br, mode, wkShown, res.round, seedOf, mode === "race" && !alive.length);
-    renderGames(wkShown, res, mode === "race" ? `Week ${wkShown?.week ?? ""} matchups` : "Live games", labels);
+    renderGames(wkShown, res, wkShown?.live?.length ? "Live games" : mode === "race" ? `Week ${wkShown?.week ?? ""} matchups` : "This week's games", labels);
     const contenders = ids.filter(i => metricOf(i) > 0.0005);
     const ever = [...new Set(hist.flatMap(h => Object.keys(h.m || {}).filter(i => h.m[i] > 0.0005 && (mode !== "race" || !alive.length || h.m[i] < 0.9995))))].map(Number);
     renderTrend((ever.length ? ever : contenders).filter(i => T[i]), mode === "race" && alive.length ? "Playoff odds over time" : "Title odds over time");
     $("rules").textContent = `Rules modeled: seeds 1–${P - wc} by record (PF breaks ties)${wc ? `; ${wc === 1 ? "seed " + P + " goes" : "the last " + wc + " seeds go"} to the highest PF among the rest` : ""}.${res.med ? " Each week the top half of scorers gets an extra win." : ""}${res.byes ? ` Top ${res.byes} seeds get a first-round bye.` : ""}`;
     animateAll();
-    if (CHAMPS) setChampFav(res); else loadChamps(L).then(() => setChampFav(res)).catch(() => {});
+    if (!CHAMPS) loadChamps(L).catch(() => {});
 
     anyLive = !!(wkShown && wkShown.live && wkShown.live.length);
     const sig = wkShown ? Object.values(wkShown.teams).map(t => t.live).join(",") : "";
