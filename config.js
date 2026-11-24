@@ -19,6 +19,11 @@ window.TRACKER_CONFIG = {
   nicknames: {
   },
 
+  // Champions from before the league moved to Sleeper (Sleeper's own history is added automatically).
+  // e.g. { season: 2021, team: "Team Name", user: "Owner name", img: "https://link-to-photo.jpg" },
+  pastChampions: [
+  ],
+
   // Number of simulations per refresh.
   sims: 20000
 };
