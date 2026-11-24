@@ -606,7 +606,7 @@ async function refresh() {
       const name = md.team_name || u.display_name || "Team " + r.roster_id, nick = (C.nicknames || {})[u.display_name] || (C.nicknames || {})[name.trim()];
       T[r.roster_id] = { name, img, short: nick || shortName(name) }; });
     $("lg").textContent = L.name.toUpperCase().slice(0, 8);
-    document.title = `${L.name} Playoff Forecast`;
+    document.title = `${L.name} Odds`;
     const pws = L.settings.playoff_week_start, lastReg = pws - 1, lastScored = L.settings.last_scored_leg || 0;
     const curWeek = st.season_type === "regular" ? (st.leg || st.week) : (st.season_type === "post" || st.season_type === "off") ? 99 : 1;
     const ids = R.map(r => r.roster_id), P = L.settings.playoff_teams || 6, wc = Math.min(C.pfWildcardSpots || 0, P);
