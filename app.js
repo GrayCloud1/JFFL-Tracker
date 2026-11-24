@@ -704,10 +704,31 @@ async function refresh() {
 function tick() {
   if (!lastFetch || !nextAt) return;
   const ago = s => s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : `${Math.floor(s / 3600)}h ago`;
+  if (!anyLive) { $("meta").innerHTML = `Updated <b>${tFmt(lastFetch)}</b>`; return; }
   $("meta").innerHTML = `Updated <b>${tFmt(lastFetch, true)}</b> · next update in <b>${Math.max(0, Math.round((nextAt - Date.now()) / 1000))}s</b>${lastChange ? ` · scores moved ${ago(Math.round((Date.now() - lastChange) / 1000))}` : ""}`;
 }
 
 $("refresh").addEventListener("click", refresh);
+// light / dark / auto theme, remembered per device
+{
+  const ICON = {
+    auto: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/></svg>',
+    light: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="currentColor"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    dark: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="currentColor"/></svg>'
+  };
+  const NAME = { auto: "Auto (matches your device)", light: "Light", dark: "Dark" };
+  const btn = $("thBtn"), meta = document.querySelector('meta[name="theme-color"]');
+  let mode = "auto"; try { mode = localStorage.getItem("jfflTheme") || "auto"; } catch {}
+  const apply = () => {
+    document.documentElement.style.colorScheme = mode === "auto" ? "" : mode;
+    const dark = mode === "dark" || (mode === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
+    if (meta) meta.content = dark ? "#0f1215" : "#ffffff";
+    btn.innerHTML = ICON[mode]; btn.title = "Theme: " + NAME[mode]; btn.setAttribute("aria-label", "Color theme: " + NAME[mode] + ". Click to change.");
+  };
+  btn.addEventListener("click", () => { mode = { auto: "light", light: "dark", dark: "auto" }[mode] || "auto"; try { mode === "auto" ? localStorage.removeItem("jfflTheme") : localStorage.setItem("jfflTheme", mode); } catch {} apply(); });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", apply);
+  apply();
+}
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) { clearTimeout(timer); timer = null; nextAt = 0; return; }
   if (Date.now() - lastFetch >= Math.min(waitMs(), 15000)) refresh();
