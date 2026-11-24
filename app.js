@@ -448,20 +448,60 @@ function renderGames(wk, res, title, labels) {
 
 function renderTrend(ids, heading) {
   const pts = hist.filter(h => h.m);
-  $("trend").hidden = !ids.length; $("tTitle").textContent = heading;
-  if (pts.length < 2) { $("figWrap").innerHTML = `<div class="empty">The chart builds as odds move. Keep this page open during games.</div>`; $("legend").innerHTML = ""; return; }
-  if (!$("trendSvg")) $("figWrap").innerHTML = `<svg id="trendSvg" role="img" aria-label="Odds over time"></svg>`;
-  const svg = $("trendSvg"), draw = () => {
-    const W = svg.clientWidth, H = svg.clientHeight, l = 44, r = 16, t = 16, b = 28;
-    const t0 = pts[0].t, t1 = pts[pts.length - 1].t, x = v => l + (v - t0) / Math.max(1, t1 - t0) * (W - l - r), y = p => t + (1 - p) * (H - t - b);
-    let g = [0, .25, .5, .75, 1].map(p => `<line x1="${l}" x2="${W - r}" y1="${y(p)}" y2="${y(p)}" stroke="var(--line)"/><text x="${l - 8}" y="${y(p) + 4}" text-anchor="end" font-size="11" fill="var(--mute)">${p * 100}%</text>`).join("");
-    g += `<text x="${l}" y="${H - 8}" font-size="11" fill="var(--mute)">${tFmt(t0)}</text><text x="${W - r}" y="${H - 8}" font-size="11" fill="var(--mute)" text-anchor="end">${tFmt(t1)}</text>`;
-    ids.forEach(id => { const d = pts.filter(h => h.m[id] != null).map(h => `${x(h.t).toFixed(1)},${y(h.m[id]).toFixed(1)}`);
-      if (d.length) { const last = d[d.length - 1].split(","); g += `<polyline points="${d.join(" ")}" fill="none" stroke="${color(id)}" stroke-width="2.5" stroke-linejoin="round"/><circle cx="${last[0]}" cy="${last[1]}" r="3.5" fill="${color(id)}"/>`; } });
+  $("tTitle").textContent = heading;
+  if (!ids.length || !pts.length) { $("trend").hidden = true; return; }
+  $("trend").hidden = false;
+  const last = pts[pts.length - 1].m;
+  // only teams that have mattered, biggest first, at most 7 lines
+  const sel = ids.filter(i => pts.some(h => (h.m[i] || 0) >= 0.02)).sort((a, b) => (last[b] || 0) - (last[a] || 0)).slice(0, 7);
+  if (!sel.length) { $("trend").hidden = true; return; }
+  $("tCap").textContent = pts.length > 1 ? `Since ${tFmt(pts[0].t)} · hover or tap the chart for exact odds` : "Lines fill in as odds change while the page is open";
+  if (!$("trendSvg") || !$("tip")) $("figWrap").innerHTML = `<svg id="trendSvg" role="img" aria-label="Odds over time"></svg><div class="tip" id="tip" hidden></div>`;
+  const svg = $("trendSvg"), tip = $("tip");
+  const draw = () => {
+    const W = svg.clientWidth, H = svg.clientHeight; if (!W || !H) return;
+    const narrow = W < 560, lab = id => narrow ? code(id) : T[id].name.length > 18 ? T[id].name.slice(0, 17) + "…" : T[id].name;
+    const l = 40, r = narrow ? 84 : 190, t = 14, b = 30, iw = W - l - r, ih = H - t - b;
+    const vmax = Math.max(...pts.flatMap(h => sel.map(i => h.m[i] || 0)));
+    const yMax = Math.min(1, Math.max(0.2, Math.ceil((vmax + 0.04) * 10) / 10)), step = yMax > 0.5 ? 0.25 : 0.1;
+    const t0 = pts[0].t, t1 = Math.max(pts[pts.length - 1].t, t0 + 60000);
+    const x = v => l + (pts.length > 1 ? (v - t0) / (t1 - t0) : 1) * iw, y = p => t + (1 - Math.min(p, yMax) / yMax) * ih;
+    let g = "";
+    for (let v = 0; v <= yMax + 1e-9; v += step) g += `<line x1="${l}" x2="${l + iw}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"${v ? ' stroke-dasharray="2 4"' : ""}/><text x="${l - 8}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="var(--mute)">${Math.round(v * 100)}%</text>`;
+    if (pts.length > 1) {
+      const span = (t1 - t0) / 60000, mins = [1, 2, 5, 10, 15, 30, 60, 120, 240, 480].find(m => span / m <= (narrow ? 3 : 6)) || 720;
+      for (let tt = Math.ceil(t0 / (mins * 60000)) * mins * 60000; tt <= t1; tt += mins * 60000)
+        g += `<line x1="${x(tt)}" x2="${x(tt)}" y1="${t + ih}" y2="${t + ih + 4}" stroke="var(--mute)"/><text x="${x(tt)}" y="${H - 8}" text-anchor="middle" font-size="11" fill="var(--mute)">${tFmt(tt)}</text>`;
+    }
+    sel.slice().reverse().forEach(id => {
+      const d = pts.filter(h => h.m[id] != null).map(h => `${x(h.t).toFixed(1)},${y(h.m[id]).toFixed(1)}`);
+      if (d.length === 1) g += `<line x1="${l}" x2="${l + iw}" y1="${y(last[id] || 0)}" y2="${y(last[id] || 0)}" stroke="${color(id)}" stroke-width="2" stroke-dasharray="4 5" opacity=".45"/>`;
+      if (d.length > 1) g += `<polyline points="${d.join(" ")}" fill="none" stroke="${color(id)}" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>`;
+      const [lx, ly] = d[d.length - 1].split(","); g += `<circle cx="${lx}" cy="${ly}" r="4.5" fill="${color(id)}" stroke="var(--panel)" stroke-width="2"/>`;
+    });
+    // end-of-line labels, nudged apart so they never overlap
+    const L = sel.map(id => ({ id, y: y(last[id] || 0) })).sort((a, b) => a.y - b.y);
+    for (let k = 1; k < L.length; k++) if (L[k].y - L[k - 1].y < 17) L[k].y = L[k - 1].y + 17;
+    const over = L.length ? L[L.length - 1].y - (t + ih + 4) : 0; if (over > 0) L.forEach(o => o.y -= over);
+    for (let k = 0; k < L.length; k++) if (L[k].y < t + 4) L[k].y = t + 4 + k * 17;
+    L.forEach(o => { g += `<text x="${l + iw + 10}" y="${o.y + 4}" font-size="12" font-weight="700" fill="${color(o.id)}">${esc(lab(o.id))} <tspan fill="var(--ink)">${fp(last[o.id] || 0)}</tspan></text>`; });
+    g += `<line id="cross" x1="0" x2="0" y1="${t}" y2="${t + ih}" stroke="var(--ink)" stroke-width="1" opacity="0"/><rect id="hit" x="${l}" y="${t}" width="${iw}" height="${ih}" fill="transparent"/>`;
     svg.innerHTML = g;
+    const move = e => {
+      if (pts.length < 2) return;
+      const rc = svg.getBoundingClientRect(), mx = (e.touches ? e.touches[0].clientX : e.clientX) - rc.left;
+      let k = 0, best = 1e9; pts.forEach((h, j) => { const dx = Math.abs(x(h.t) - mx); if (dx < best) { best = dx; k = j; } });
+      const h = pts[k], cx = x(h.t), cr = svg.querySelector("#cross"); cr.setAttribute("x1", cx); cr.setAttribute("x2", cx); cr.setAttribute("opacity", ".35");
+      tip.hidden = false;
+      tip.innerHTML = `<b>${tFmt(h.t, true)}</b>${sel.slice().sort((a, b) => (h.m[b] || 0) - (h.m[a] || 0)).map(id => `<div><i style="background:${color(id)}"></i>${nm(id)}<span>${fp(h.m[id] || 0)}</span></div>`).join("")}`;
+      const tw = tip.offsetWidth; let lft = cx + 12; if (lft + tw > W - 4) lft = cx - 12 - tw; tip.style.left = Math.max(4, lft) + "px"; tip.style.top = t + "px";
+    };
+    const hide = () => { tip.hidden = true; const cr = svg.querySelector("#cross"); cr && cr.setAttribute("opacity", "0"); };
+    const hit = svg.querySelector("#hit");
+    hit.addEventListener("pointermove", move); hit.addEventListener("pointerdown", move); hit.addEventListener("pointerleave", hide);
   };
-  draw(); (svg._ro ||= new ResizeObserver(draw)).observe(svg);
-  $("legend").innerHTML = ids.map(id => `<span style="--c:${color(id)}">${nm(id)}</span>`).join("");
+  draw(); if (!svg._ro) { svg._ro = new ResizeObserver(() => svg._draw && svg._draw()); svg._ro.observe(svg); } svg._draw = draw;
+  $("legend").innerHTML = "";
 }
 
 // ---------- main ----------
