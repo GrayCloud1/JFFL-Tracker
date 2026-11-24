@@ -20,13 +20,31 @@ body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 Inter,system-
 .top .wrap{display:flex;align-items:center;gap:18px;height:54px}
 .logo{display:flex;align-items:center;gap:10px;font:800 20px/1 "Barlow Condensed";letter-spacing:.02em;white-space:nowrap}
 .logo b{background:var(--ink);color:var(--panel);padding:5px 8px 4px;border-radius:3px}
-.tabs{display:flex;gap:2px;overflow-x:auto;flex:1}
+.tabs{display:flex;gap:2px;overflow-x:auto}
 .tabs a{color:var(--ink2);text-decoration:none;font:600 13px Inter;padding:8px 12px;border-radius:4px;white-space:nowrap}
 .tabs a:hover,.tabs a:focus-visible{color:var(--ink);background:var(--soft);outline:none}
 .pill{display:inline-flex;align-items:center;gap:6px;font:700 11px Inter;letter-spacing:.06em;padding:4px 8px;border-radius:3px;background:var(--soft);color:var(--mute);white-space:nowrap}
 .pill.live{background:var(--live);color:#fff}
 .pill i{width:7px;height:7px;border-radius:50%;background:currentColor}
 @media(prefers-reduced-motion:no-preference){.pill.live i{animation:bl 1.2s infinite}@keyframes bl{50%{opacity:.25}}}
+/* sound menu */
+.snd{position:relative;margin-left:auto}
+.sndb{display:grid;place-items:center;width:38px;height:38px;min-height:0;padding:0;border:1px solid var(--line);border-radius:50%;background:var(--panel);color:var(--mute);cursor:pointer}
+.sndb .w{opacity:.35}.sndb.on{color:var(--ink);border-color:var(--ink)}.sndb.on .w{opacity:1}
+.sndp{position:absolute;right:0;top:46px;width:min(300px,86vw);background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 32px #0000002e;padding:14px 16px;z-index:20}
+.sndh{font:700 11px Inter;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin-bottom:8px}
+.sndp .row{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;font-weight:600;font-size:14px;cursor:pointer}
+.sndp .row small{display:block;font-weight:400;font-size:12px;color:var(--mute);margin-top:2px}
+.sndp input[type=checkbox]{width:20px;height:20px;accent-color:var(--fav);flex:none;margin-top:2px}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg label{position:relative;cursor:pointer}.seg input{position:absolute;opacity:0;pointer-events:none}
+.seg span{display:block;text-align:center;padding:9px 0;font:600 13px Inter;color:var(--ink2)}
+.seg label+label span{border-left:1px solid var(--line)}
+.seg input:checked+span{background:var(--ink);color:var(--panel)}
+.seg input:focus-visible+span{outline:2px solid var(--accent);outline-offset:-2px}
+.vol{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:13px;color:var(--ink2)}.vol input{flex:1;accent-color:var(--ink)}
+.sndp .test{width:100%;margin-top:12px;min-height:36px;border:1px solid var(--line);border-radius:6px;background:var(--soft);color:var(--ink);font:600 13px Inter;cursor:pointer}
+.sndp .hint{font-size:12px;color:var(--accent);margin:10px 0 0}.sndp .note{font-size:11px;color:var(--mute);margin:8px 0 0}
 /* ticker */
 .ticker{background:var(--soft);color:var(--ink);border-bottom:1px solid var(--line)}
 .ticker .wrap{display:flex;gap:0;overflow-x:auto;scrollbar-width:none}
@@ -120,6 +138,23 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-off
 <header class="top"><div class="wrap">
  <div class="logo"><b id="lg">JFFL</b><span class="hide-s">Playoff Forecast</span></div>
  <nav class="tabs"><a href="#forecast">Odds</a><a href="#bracket">Bracket</a><a href="#matchups">Matchups</a><a href="#trend">Trends</a></nav>
+ <div class="snd">
+  <button class="sndb" id="sndBtn" aria-pressed="false" aria-haspopup="true" aria-label="Sound settings" title="Sound"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path class="w" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+  <div class="sndp" id="sndPanel" hidden role="dialog" aria-label="Sound settings">
+   <div class="sndh">Sound</div>
+   <label class="row"><span>Sound effects<small>Chime on scoring · whoosh on big odds swings · horn when a game goes final</small></span><input type="checkbox" id="sndSfx"></label>
+   <div class="sndh" style="margin-top:12px">Background music</div>
+   <div class="seg" role="radiogroup" aria-label="Background music">
+    <label><input type="radio" name="music" value="off"><span>Off</span></label>
+    <label><input type="radio" name="music" value="piano"><span>Piano</span></label>
+    <label><input type="radio" name="music" value="jazz"><span>Jazz</span></label>
+   </div>
+   <label class="vol"><span>Volume</span><input type="range" id="sndVol" min="0" max="100"></label>
+   <button class="test" id="sndTest">Preview sounds</button>
+   <p class="hint" id="sndHint">Tap anywhere to turn sound on. Browsers block audio until you interact with the page.</p>
+   <p class="note">Original music made in your browser, royalty-free.</p>
+  </div>
+ </div>
  <span class="pill" id="pill"><i></i><span id="pillT">LOADING</span></span>
 </div></header>
 <div class="ticker" id="tickerBar" hidden><div class="wrap" id="ticker"></div></div>
@@ -152,5 +187,6 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-off
  <button id="refresh">Refresh now</button>
 </div></footer>
 <script src="config.js"></script>
+<script src="sound.js"></script>
 <script src="app.js"></script>
 </body></html>

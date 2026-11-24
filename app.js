@@ -15,7 +15,7 @@ const amer = p => { if (p >= 0.9995) return "LOCK"; if (p <= 0.0005) return "—
   return p >= 0.5 ? "−" + Math.max(100, r5(100 * p / (1 - p))) : "+" + Math.min(99995, Math.max(100, r5(100 * (1 - p) / p))); };
 const half = x => (Math.round(x * 2) / 2).toFixed(1);
 
-let T = {}, nextAt = 0, lastFetch = 0, lastChange = 0, lastSig = "", timer = null, anyLive = false, histKey = "", hist = [];
+let prevFinals = null, T = {}, nextAt = 0, lastFetch = 0, lastChange = 0, lastSig = "", timer = null, anyLive = false, histKey = "", hist = [];
 
 function gauss() { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
 const color = id => PAL[(id - 1) % PAL.length];
@@ -362,7 +362,13 @@ async function refresh() {
     res.wkLive = wkShown ? Object.fromEntries(Object.entries(wkShown.teams).map(([k, v]) => [k, v.live])) : {};
     const alive = mode === "race" ? ids.filter(i => res.O[i].make > 0.0005 && res.O[i].make < 0.9995) : [];
     const metricOf = i => mode === "race" && alive.length ? res.O[i].make : res.O[i].champ;
-    pushHist({ t: Date.now(), m: Object.fromEntries(ids.map(i => [i, metricOf(i)])) });
+    const prevM = hist.length ? hist[hist.length - 1].m : null;
+    const newM = Object.fromEntries(ids.map(i => [i, metricOf(i)]));
+    pushHist({ t: Date.now(), m: newM });
+    // sound cues: biggest odds swing since the last refresh, newly final matchups, new points
+    let swing = 0; if (prevM) for (const i of ids) { const d = newM[i] - (prevM[i] ?? newM[i]); if (Math.abs(d) >= 0.10 && Math.abs(d) > Math.abs(swing)) swing = d; }
+    const finalsNow = new Set((wkShown?.pairs || []).filter(([a, b]) => !wkShown.teams[a].items.length && !wkShown.teams[b].items.length).map(p => p.join("-")));
+    const newFinals = prevFinals ? [...finalsNow].filter(k => !prevFinals.has(k)).length : 0; prevFinals = finalsNow;
 
     // standings-based seeds for display
     const { base } = standings(L, R);
@@ -383,7 +389,9 @@ async function refresh() {
 
     anyLive = !!(wkShown && wkShown.live && wkShown.live.length);
     const sig = wkShown ? Object.values(wkShown.teams).map(t => t.live).join(",") : "";
+    const scored = !!lastSig && sig !== lastSig;
     if (sig !== lastSig) { if (lastSig) lastChange = Date.now(); lastSig = sig; }
+    window.JFFLSound?.onRefresh({ scored, swing, finals: newFinals });
     lastFetch = Date.now();
     $("pill").className = "pill" + (anyLive ? " live" : "");
     $("pillT").textContent = anyLive ? "LIVE" : "UPDATED " + tFmt(lastFetch).toUpperCase();
