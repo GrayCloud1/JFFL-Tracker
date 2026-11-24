@@ -21,6 +21,10 @@ let roundWeeks = () => 1; // weeks per playoff round (JFFL: 2)
 const left = t => t.items.filter(i => !i.fut).length; // starters still to play (excludes a not-yet-played week)
 let prevFinals = null, T = {}, nextAt = 0, lastFetch = 0, lastChange = 0, lastSig = "", timer = null, anyLive = false, histKey = "", hist = [];
 const PV = {}, openRows = new Set();
+// last big play per matchup: built by comparing each starter's points between refreshes
+let prevPP = null, prevWP = {}, IMP = {}, impKey = "";
+function loadImp(key) { if (impKey === key) return; impKey = key; prevPP = null; prevWP = {}; try { IMP = JSON.parse(localStorage.getItem(key) || "{}"); } catch { IMP = {}; } }
+function saveImp() { try { localStorage.setItem(impKey, JSON.stringify(IMP)); } catch {} }
 
 function gauss() { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
 const color = id => PAL[(id - 1) % PAL.length];
@@ -63,7 +67,7 @@ function pushHist(e) { hist.push(e); if (hist.length > 500) hist = hist.slice(-5
 
 // ---------- data ----------
 async function gameClock(season, week) {
-  const frac = {}, live = [];
+  const frac = {}, live = [], plays = {};
   try {
     const e = await get(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${week}&dates=${season}`);
     for (const ev of e.events || []) {
@@ -74,7 +78,8 @@ async function gameClock(season, week) {
         f = st.period > 4 ? 0.01 : Math.max(0.005, ((4 - st.period) * 900 + (m * 60 + (sec || 0))) / 3600);
         live.push(ev.shortName + " " + st.type.shortDetail);
       }
-      for (const c of ev.competitions[0].competitors) frac[ESPN2SLP[c.team.abbreviation] || c.team.abbreviation] = f;
+      const lp = s === "in" && ev.competitions[0].situation?.lastPlay?.text;
+      for (const c of ev.competitions[0].competitors) { const ab = ESPN2SLP[c.team.abbreviation] || c.team.abbreviation; frac[ab] = f; if (lp) plays[ab] = { text: lp, when: st.type.shortDetail }; }
     }
   } catch (err) {
     const sch = await get(`${S2}/schedule/nfl/regular/${season}`);
@@ -83,7 +88,7 @@ async function gameClock(season, week) {
       frac[g.home] = frac[g.away] = f; if (f === 0.5) live.push(`${g.away} @ ${g.home}`);
     }
   }
-  return { frac, live };
+  return { frac, live, plays };
 }
 
 async function liveWeek(L, week) {
@@ -96,19 +101,21 @@ async function liveWeek(L, week) {
   const P = {}; for (const p of proj) P[p.player_id] = p;
   const teams = {};
   for (const m of mus) {
-    const items = [];
+    const items = [], pp = {}, who = {};
     (m.starters || []).forEach(pid => {
       if (!pid || pid === "0") return;
+      pp[pid] = (m.players_points || {})[pid] || 0;
       const p = P[pid]; if (!p) return;
       const nfl = p.team, f = clock.frac[nfl] ?? 0;
       let mu = (p.stats && p.stats[key]) || 0;
       if (f === 1 && ["Out", "IR", "Sus", "PUP"].includes(p.player && p.player.injury_status)) mu = 0;
       const pl = p.player || {}, name = pl.position === "DEF" ? `${nfl} D/ST` : pl.last_name ? `${(pl.first_name || "")[0] ? pl.first_name[0] + ". " : ""}${pl.last_name}` : `${nfl} ${pl.position || "player"}`;
+      who[pid] = { name, last: pl.last_name || "", nfl };
       if (f > 0 && mu > 0) items.push({ nfl, mu: mu * f, sd: 0.62 * mu * Math.sqrt(f), name, pos: pl.position || "", f });
     });
-    teams[m.roster_id] = { live: m.custom_points ?? m.points ?? 0, items };
+    teams[m.roster_id] = { live: m.custom_points ?? m.points ?? 0, items, pp, who };
   }
-  return { week, teams, pairs: pairsOf(mus), live: clock.live };
+  return { week, teams, pairs: pairsOf(mus), live: clock.live, plays: clock.plays };
 }
 
 function pairsOf(mus) {
@@ -439,6 +446,20 @@ function needle(p, ca, cb) {
     <circle cx="${cx}" cy="${cy}" r="7" fill="var(--ink)"/></svg>`;
 }
 
+function impactBox(key) {
+  const m = IMP[key]; if (!m || !T[m.rid]) return "";
+  const mins = Math.round((Date.now() - m.t) / 60000), ago = mins < 1 ? "just now" : mins < 60 ? mins + "m ago" : Math.round(mins / 60) + "h ago";
+  const pts = d => `${d >= 0 ? "+" : "−"}${f1(Math.abs(d))} pts`;
+  const head = m.desc ? esc(m.desc.length > 150 ? m.desc.slice(0, 147) + "…" : m.desc) : `<b>${esc(m.name)}</b> ${pts(m.delta)}`;
+  let sub = "";
+  if (m.delta != null) {
+    sub = `<br><span class="mt">${m.desc ? `${esc(m.name)} ${pts(m.delta)} for ${esc(code(m.rid))}` : "for " + esc(code(m.rid))}</span>`;
+    if (m.before != null) { const d = Math.round((m.after - m.before) * 100);
+      sub += ` <span class="mt">· win odds</span> <b>${Math.round(m.before * 100)}% → ${Math.round(m.after * 100)}%</b>${d ? ` <span class="${d > 0 ? "up" : "dn"}">${d > 0 ? "▲" : "▼"}${Math.abs(d)}</span>` : ""}`; }
+  }
+  return `<div class="imp${mins < 1 ? " new" : ""}"><span class="dot"></span><div>${m.td ? '<span class="tdtag">TOUCHDOWN</span>' : '<span class="mt">Last big play · </span>'}${head} <span class="mt">· ${m.when ? esc(m.when) + ", " : ""}${ago}</span>${sub}</div></div>`;
+}
+
 function renderGames(wk, res, title, labels) {
   if (!wk || !wk.pairs.length) { $("matchups").hidden = true; return; }
   $("matchups").hidden = false; $("mTitle").textContent = title;
@@ -453,7 +474,7 @@ function renderGames(wk, res, title, labels) {
     return `<div class="card mu"><div class="top2"><span>${labels ? labels[k] : "Matchup " + (k + 1)}</span><span class="lv">Win probability</span></div>
       ${needle(p, color(a), color(b))}
       <div class="vs">${side(a, ta, pa, "a")}<div class="mid"><span ${anim("gp" + a + "-" + b, Math.max(p, 1 - p))}>${fp(Math.max(p, 1 - p))}</span><br><span style='font-weight:600;font-size:11px'>${esc(code(p >= .5 ? a : b))}</span></div>${side(b, tb, pb, "b")}</div>
-      <div class="line"><span>Spread <b>${esc(code(favA ? a : b))} −${sp}</b></span><span>O/U <b>${half(pa + pb)}</b></span><span>ML <b>${esc(code(a))} ${amer(p)}</b> / <b>${esc(code(b))} ${amer(1 - p)}</b></span></div></div>`;
+      <div class="line"><span>Spread <b>${esc(code(favA ? a : b))} −${sp}</b></span><span>O/U <b>${half(pa + pb)}</b></span><span>ML <b>${esc(code(a))} ${amer(p)}</b> / <b>${esc(code(b))} ${amer(1 - p)}</b></span></div>${impactBox(a + "-" + b)}</div>`;
   }).join("");
 }
 
@@ -515,6 +536,36 @@ function renderTrend(ids, heading) {
   $("legend").innerHTML = "";
 }
 
+// Compare each starter's points with the last refresh. The biggest change in a matchup becomes its
+// "last big play", described with ESPN's last-play text when that text names the player.
+function trackPlays(wk, wp) {
+  if (!wk) return;
+  const nowPP = {}; for (const id in wk.teams) nowPP[id] = wk.teams[id].pp || {};
+  const describe = (w, pid) => { const who = w.who[pid], pl = who && wk.plays?.[who.nfl];
+    return pl && who.last.length > 2 && new RegExp("\\b" + who.last.replace(/[^A-Za-z'-]/g, "") + "\\b", "i").test(pl.text) ? pl : null; };
+  for (const [a, b] of wk.pairs) {
+    const key = a + "-" + b, pNow = wp[key] ?? 0.5;
+    if (prevPP) {
+      let best = null;
+      for (const id of [a, b]) for (const pid in nowPP[id]) {
+        const d = nowPP[id][pid] - (prevPP[id]?.[pid] ?? nowPP[id][pid]);
+        if (Math.abs(d) >= 1 && (!best || Math.abs(d) > Math.abs(best.d))) best = { id, pid, d };
+      }
+      if (best) {
+        const w = wk.teams[best.id], who = w.who[best.pid] || { name: "A starter" }, pl = describe(w, best.pid), side = p => best.id === a ? p : 1 - p;
+        IMP[key] = { t: Date.now(), rid: best.id, name: who.name, delta: best.d, desc: pl?.text || "", when: pl?.when || "",
+          td: best.d >= 5.5 || /touchdown/i.test(pl?.text || ""), before: prevWP[key] != null ? side(prevWP[key]) : null, after: side(pNow) };
+      }
+    } else if (!IMP[key]) {
+      // first load: show the latest live play that involves one of these starters, if any
+      for (const id of [a, b]) for (const pid in nowPP[id]) { const pl = describe(wk.teams[id], pid);
+        if (pl && !IMP[key]) IMP[key] = { t: Date.now(), rid: id, name: wk.teams[id].who[pid].name, desc: pl.text, when: pl.when, td: /touchdown/i.test(pl.text) }; }
+    }
+    prevWP[key] = pNow;
+  }
+  prevPP = nowPP; saveImp();
+}
+
 // ---------- main ----------
 // Refresh fast while NFL games are live, slowly otherwise, and not at all while the page is hidden
 // (phone locked, another app or tab in front) so idle phones don't burn battery.
@@ -544,7 +595,7 @@ async function refresh() {
         else weeks.push({ future: true, pairs: pairsOf(await get(`${S}/league/${C.leagueId}/matchups/${w}`)) });
       }
       wkShown = weeks.find(w => w.cur);
-      loadHist(`jffl2:${C.leagueId}:${L.season}:w${liveW}`);
+      loadHist(`jffl2:${C.leagueId}:${L.season}:w${liveW}`); loadImp(`jfflimp:${C.leagueId}:${L.season}:w${liveW}`);
       res = simulate(L, R, mode, weeks);
       res.gpw = weeks.length * (res.med ? 2 : 1);
       $("eyebrow").textContent = `${L.season} season · Week ${liveW}${lastReg - liveW ? ` · ${lastReg - liveW + 1} weeks left` : " · final regular-season week"}`;
@@ -570,7 +621,7 @@ async function refresh() {
       wkShown = { ...wkShown, pairs: live.map(m => [m.t1, m.t2]) };
       const wkTag = rLen > 1 ? ` · week ${wIn} of ${rLen}` : "";
       labels = live.map(m => (m.p === 1 ? "Championship" : "Game " + m.m) + wkTag);
-      loadHist(`jffl2:${C.leagueId}:${L.season}:w${rStart}`);
+      loadHist(`jffl2:${C.leagueId}:${L.season}:w${rStart}`); loadImp(`jfflimp:${C.leagueId}:${L.season}:w${rStart + wIn - 1}`);
       res = simulate(L, R, mode, null, br, wkShown, round);
       res.br = br; res.round = round;
       $("eyebrow").textContent = `${L.season} playoffs · ${round >= maxR ? "Championship" : "Round " + round} · ${rLen > 1 ? `Weeks ${rStart}–${rStart + rLen - 1} (week ${wIn} of ${rLen})` : "Week " + rStart}`;
@@ -585,6 +636,7 @@ async function refresh() {
     const finalsNow = new Set((wkShown?.pairs || []).filter(([a, b]) => !wkShown.teams[a].items.length && !wkShown.teams[b].items.length).map(p => p.join("-")));
     const newFinals = prevFinals ? [...finalsNow].filter(k => !prevFinals.has(k)).length : 0; prevFinals = finalsNow;
 
+    trackPlays(wkShown, res.wp);
     const { base } = standings(L, R);
     const W = {}, PF = {}; ids.forEach(i => { W[i] = base[i].w; PF[i] = base[i].pf; });
     const seedOf = {};
