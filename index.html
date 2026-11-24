@@ -192,7 +192,6 @@ h2{font:800 24px/1 "Barlow Condensed";margin:0;text-transform:uppercase;letter-s
 footer{margin-top:28px;background:var(--bar);color:#aab1b8;font-size:12px}
 footer .wrap{padding:22px max(3vw,14px) 30px;display:grid;gap:8px}
 footer b{color:#fff}
-.how summary{cursor:pointer;color:#fff;font-weight:600;width:max-content}.how summary::marker{color:#aab1b8}.how p{margin:8px 0 0;max-width:760px}
 button{font:600 13px Inter;min-height:36px;padding:0 14px;border:1px solid #3a4047;border-radius:4px;background:transparent;color:#fff;cursor:pointer;justify-self:start}
 button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 [hidden]{display:none!important}
@@ -254,8 +253,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-off
 </main>
 
 <footer><div class="wrap">
- <details class="how"><summary>How the odds work</summary><p>Your browser pulls live scores, lineups and projections from Sleeper and game clocks from ESPN, then plays out the rest of the season 20,000 times. It updates every 20 seconds while NFL games are on and every 2 minutes otherwise. Starters still to play are drawn around their Sleeper projection, scaled by how much of their NFL game is left, with teammates moving partly together. Future games use each team's season scoring average. Odds are converted to American odds for fun, with no vig.</p></details>
- <div id="rules"></div>
+ <div id="rules" hidden></div>
  <div id="status"></div>
  <div>Not affiliated with Sleeper, ESPN or the NFL.</div>
  <button id="refresh">Refresh now</button>
