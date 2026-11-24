@@ -31,6 +31,29 @@ The site lives at **https://jfflodds.com** (registered at Porkbun). The `CNAME` 
 
 Keep auto-renew on at Porkbun so the domain never lapses.
 
+## Nice to have (ideas for later)
+
+Ideas we've talked about but are holding off on, so the main page stays focused.
+
+**Live matchup polish** (prototyped and tested on Nov 24, not published)
+- **Last big play** on each live matchup card: the starter whose points just jumped, ESPN's play description when it names them, and the win-odds swing (e.g. "Josh Allen 12-yd TD pass · +6.4 pts · win odds 66% → 71% ▲5").
+- **Touchdown celebration**: a football burst and "TOUCHDOWN!" over the matchup card when a starter scores 5.5+ at once, plus a short fanfare for anyone with sound effects on.
+- **"What it means" line** under each matchup: each team's title (or playoff) odds with a win vs. a loss.
+
+**Layout**
+- **Live / Breakdown tabs**: keep live games, odds and bracket on the main view, and move the stat boxes, scenario cards, "who wins it all" legend and odds-over-time chart to a second tab (jfflodds.com/#breakdown).
+- **Compact matchup styles** to fit more games per phone screen: tug-of-war win bar, score-vs-projection bars, or a win-odds game-flow line. (Decided to keep the meter for now.)
+
+**From comparing with jfflplayoffs2026.netlify.app**
+- **What-if picker**: tap who wins each game and watch the odds update.
+- **"My team"**: pick your team once and keep it highlighted and pinned.
+- **Recent form**: weight the last 4 weeks more when simulating future games.
+- **League nicknames** for short names (e.g. "Comm. Holden", "Kumon Nelson") via `nicknames` in `config.js`.
+
+**Social** (needs a small free backend such as Firebase or Supabase)
+- **Chat room** on the site, or simply a button that opens the league's Sleeper chat.
+- **Emote reactions** on matchups people are watching, shared live with everyone.
+
 ## Settings
 
 Edit `config.js`:
