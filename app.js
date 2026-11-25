@@ -676,7 +676,9 @@ async function refresh() {
     renderGames(wkShown, res, wkShown?.live?.length ? "Live games" : mode === "race" ? `Week ${wkShown?.week ?? ""} matchups` : "This week's games", labels);
     const contenders = ids.filter(i => metricOf(i) > 0.0005);
     const ever = [...new Set(hist.flatMap(h => Object.keys(h.m || {}).filter(i => h.m[i] > 0.0005 && (mode !== "race" || !alive.length || h.m[i] < 0.9995))))].map(Number);
-    renderTrend((ever.length ? ever : contenders).filter(i => T[i]), mode === "race" && alive.length ? "Playoff odds over time" : "Title odds over time");
+    // in the playoffs, only chart teams that are in the bracket (drops anyone removed from it)
+    const inBr = mode === "race" ? null : new Set(res.br.flatMap(m => [m.t1, m.t2]).filter(x => x != null));
+    renderTrend((ever.length ? ever : contenders).filter(i => T[i] && (!inBr || inBr.has(i))), mode === "race" && alive.length ? "Playoff odds over time" : "Title odds over time");
     $("rules").textContent = `Rules modeled: seeds 1–${P - wc} by record (PF breaks ties)${wc ? `; ${wc === 1 ? "seed " + P + " goes" : "the last " + wc + " seeds go"} to the highest PF among the rest` : ""}.${res.med ? " Each week the top half of scorers gets an extra win." : ""}${res.byes ? ` Top ${res.byes} seeds get a first-round bye.` : ""}`;
     animateAll();
     if (!CHAMPS) loadChamps(L).catch(() => {});
