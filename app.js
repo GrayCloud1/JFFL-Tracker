@@ -24,14 +24,10 @@ const left = t => t.items.filter(i => !i.fut).length; // starters still to play 
 let prevFinals = null, T = {}, nextAt = 0, lastFetch = 0, lastChange = 0, lastSig = "", timer = null, anyLive = false, histKey = "", hist = [];
 const PV = {}, openRows = new Set();
 // last big play per matchup: built by comparing each starter's points between refreshes
-let prevPP = null, prevWP = {}, IMP = {}, impKey = "", SC = {};
-// On each page load the latest play per team comes from ESPN's play-by-play; while the page stays open, live stats take over.
-function loadImp(key) { if (impKey === key) return; impKey = key; prevWP = {};
-  try { IMP = JSON.parse(localStorage.getItem(key) || "{}"); } catch { IMP = {}; }
-  // one last play per team now ("3-7:3"); move any older one-per-matchup entry to its team
-  for (const k of Object.keys(IMP)) if (!k.includes(":")) { const m = IMP[k]; if (m && m.rid != null && !IMP[k + ":" + m.rid]) IMP[k + ":" + m.rid] = m; delete IMP[k]; }
-  prevPP = null; try { localStorage.removeItem(key + ":base"); } catch {} }
-function saveImp() { try { localStorage.setItem(impKey, JSON.stringify(IMP)); } catch {} }
+let IMP = {}, impKey = "", SC = {};
+// "Last play" per team comes straight from the NFL play-by-play on every refresh (same for everyone, nothing saved).
+function loadImp(key) { if (impKey === key) return; impKey = key; IMP = {};
+  try { localStorage.removeItem(key); localStorage.removeItem(key + ":base"); } catch {} } // clear what older versions saved
 
 function gauss() { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
 const color = id => PAL[(id - 1) % PAL.length];
@@ -81,7 +77,7 @@ async function gameClock(season, week) {
     for (const ev of e.events || []) {
       const st = ev.status, s = st.type.state; let f = 1;
       if (s === "pre" && ev.date && (!next || ev.date < next)) next = ev.date;
-      if (s !== "pre") events.push({ id: ev.id, teams: ev.competitions[0].competitors.map(c => ESPN2SLP[c.team.abbreviation] || c.team.abbreviation) });
+      if (s !== "pre") events.push({ id: ev.id, s, teams: ev.competitions[0].competitors.map(c => ESPN2SLP[c.team.abbreviation] || c.team.abbreviation) });
       if (s === "post") f = 0;
       else if (s === "in") {
         const [m, sec] = String(st.displayClock || "0:00").split(":").map(Number);
@@ -102,22 +98,20 @@ async function gameClock(season, week) {
 }
 
 async function liveWeek(L, week) {
-  const [mus, proj, clock, stats] = await Promise.all([
+  const [mus, proj, clock] = await Promise.all([
     get(`${S}/league/${C.leagueId}/matchups/${week}`),
     get(`${S2}/projections/nfl/${L.season}/${week}?season_type=regular&${POS}`),
-    gameClock(L.season, week),
-    get(`${S2}/stats/nfl/${L.season}/${week}?season_type=regular&${POS}`).catch(() => []) // live box-score stats, used to describe plays
+    gameClock(L.season, week)
   ]);
   SC = L.scoring_settings || {};
-  const ST = {}; for (const x of stats || []) ST[x.player_id] = { s: x.stats || {}, t: x.updated_at || 0 };
   const rec = L.scoring_settings.rec, key = rec >= 1 ? "pts_ppr" : rec >= 0.5 ? "pts_half_ppr" : "pts_std";
   const P = {}; for (const p of proj) P[p.player_id] = p;
   const teams = {};
   for (const m of mus) {
-    const items = [], pp = {}, who = {}, st = {};
+    const items = [], pp = {}, who = {};
     (m.starters || []).forEach(pid => {
       if (!pid || pid === "0") return;
-      pp[pid] = (m.players_points || {})[pid] || 0; st[pid] = ST[pid] || { s: {}, t: 0 };
+      pp[pid] = (m.players_points || {})[pid] || 0;
       const p = P[pid]; if (!p) return;
       const nfl = p.team, f = clock.frac[nfl] ?? 0;
       let mu = (p.stats && p.stats[key]) || 0;
@@ -126,7 +120,7 @@ async function liveWeek(L, week) {
       who[pid] = { name, last: pl.last_name || "", fi: (pl.first_name || "")[0] || "", nfl, pos: pl.position || "" };
       if (f > 0 && mu > 0) items.push({ nfl, mu: mu * f, sd: 0.62 * mu * Math.sqrt(f), name, pos: pl.position || "", f, pid });
     });
-    teams[m.roster_id] = { live: m.custom_points ?? m.points ?? 0, items, pp, who, st };
+    teams[m.roster_id] = { live: m.custom_points ?? m.points ?? 0, items, pp, who };
   }
   return { week, teams, pairs: pairsOf(mus), live: clock.live, plays: clock.plays, next: clock.next, events: clock.events };
 }
@@ -445,7 +439,7 @@ function needle(p, ca, cb) {
 document.head.insertAdjacentHTML("beforeend", "<style>.imp{flex-direction:column;gap:8px}.imp .dot{display:none}.imp .ir{display:flex;gap:9px;align-items:flex-start}.imp .ir .mono{flex:none;margin-top:2px}.imp .ir.new{animation:fu 1.8s ease-out}</style>");
 // one "Last play" line per team, so a big play for one side can't be buried by the other side's next play
 function impactBox(a, b) {
-  const pts = d => `${d >= 0 ? "+" : "−"}${f1(Math.abs(d))} pts`;
+  const pts = d => Math.abs(d) < 0.05 ? "0 pts" : `${d > 0 ? "+" : "−"}${f1(Math.abs(d))} pts`;
   const row = id => {
     const m = IMP[a + "-" + b + ":" + id]; if (!m || !T[id] || !("play" in m)) return "";
     const mins = Math.round((Date.now() - m.t) / 60000), ago = mins < 1 ? "just now" : mins < 60 ? mins + "m ago" : Math.round(mins / 60) + "h ago";
@@ -537,151 +531,82 @@ function renderTrend(ids, heading) {
   $("legend").innerHTML = "";
 }
 
-// "Last play": every refresh, compare each starter's live box-score stats with what we saw before.
-// Any change that moves their fantasy score (using this league's scoring) becomes the matchup's
-// last play, described from the stat change, e.g. "30-yard reception" or "42-yard field goal".
-function playText(pos, a, b) {
-  const d = k => (b[k] || 0) - (a[k] || 0), n = k => Math.round(d(k));
-  const yds = (v, what) => v > 0 ? `${v}-yard ${what}` : v < 0 ? `${what} for a ${-v}-yard loss` : `no-gain ${what}`;
-  if (pos === "DEF") {
-    const t = [];
-    if (d("def_td") > 0 || d("def_st_td") > 0) t.push("defensive touchdown");
-    if (d("int") > 0) t.push("interception"); if (d("fum_rec") > 0) t.push("fumble recovery");
-    if (d("sack") > 0) t.push(d("sack") > 1 ? `${n("sack")} sacks` : "sack"); if (d("safe") > 0) t.push("safety");
-    if (d("blk_kick") > 0) t.push("blocked kick"); if (d("pts_allow") > 0) t.push(`gave up ${n("pts_allow")} points`);
-    return t.join(", ");
-  }
-  if (pos === "K") {
-    const t = [];
-    if (d("fgm") > 0) t.push(d("fgm") === 1 && d("fgm_yds") > 0 ? `${n("fgm_yds")}-yard field goal` : d("fgm") > 1 ? `${n("fgm")} field goals` : "field goal");
-    if (d("fgmiss") > 0) t.push("missed field goal"); if (d("xpm") > 0) t.push(d("xpm") > 1 ? `${n("xpm")} extra points` : "extra point"); if (d("xpmiss") > 0) t.push("missed extra point");
-    return t.join(", ");
-  }
-  const t = [];
-  if (d("pass_cmp") > 0 || d("pass_td") > 0) t.push(d("pass_td") > 0 ? (d("pass_cmp") > 1 ? "touchdown pass" : `${n("pass_yd")}-yard touchdown pass`) : d("pass_cmp") > 1 ? `${n("pass_cmp")} completions for ${n("pass_yd")} yards` : yds(n("pass_yd"), "completion"));
-  if (d("pass_int") > 0) t.push("interception thrown");
-  if (d("rec") > 0 || d("rec_td") > 0) t.push(d("rec_td") > 0 ? (d("rec") > 1 ? "touchdown catch" : `${n("rec_yd")}-yard touchdown catch`) : d("rec") > 1 ? `${n("rec")} catches for ${n("rec_yd")} yards` : yds(n("rec_yd"), "reception"));
-  if (d("rush_att") > 0 || d("rush_td") > 0) t.push(d("rush_td") > 0 ? (d("rush_att") > 1 ? "touchdown run" : `${n("rush_yd")}-yard touchdown run`) : d("rush_att") > 1 ? `${n("rush_att")} carries for ${n("rush_yd")} yards` : yds(n("rush_yd"), "run"));
-  if (d("pass_2pt") + d("rush_2pt") + d("rec_2pt") > 0) t.push("2-point conversion");
-  if (d("fum_lost") > 0) t.push("fumble lost");
-  return t.join(", ");
-}
-// First load: any matchup without a saved last play gets one from ESPN's play-by-play, so every card
-// has its most recent scoring play even for a first-time visitor. After that, live stats take over.
-let seeded = false;
+// "Last play": each team's most recent play by one of its starters, read from ESPN's play-by-play.
+// Counts plays that gain or lose yards, touchdowns, turnovers, sacks and kicks (not incompletions or no-gain plays).
+// Points shown are what that one play was worth under this league's scoring.
 const escRe = x => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const sc = k => +SC[k] || 0;
 function espnPlay(p, who, teamOf) {
   const txt = p.text || "", type = p.type?.text || "", y = Math.round(p.statYardage || 0);
-  if (/no play/i.test(txt) || /penalty|timeout|end of|kickoff|punt/i.test(type)) return "";
-  const td = /touchdown/i.test(type) || /TOUCHDOWN/.test(txt);
+  if (/no play/i.test(txt) || /penalty|timeout|end of|kickoff|punt|two-minute/i.test(type)) return null;
+  const td = /touchdown/i.test(type) || /TOUCHDOWN/.test(txt), r = (text, pts) => ({ text, pts: pts == null ? null : Math.round(pts * 10) / 10 });
   if (who.pos === "DEF") {
     const off = teamOf(p.start?.team?.id);
-    if (!off || off === who.nfl) return "";
-    if (td && /interception|fumble|return/i.test(type)) return "defensive touchdown";
-    if (p.scoringPlay && p.scoreValue) return `gave up ${p.scoreValue} points`;
-    if (/sack/i.test(type)) return "sack";
-    if (/interception/i.test(type)) return "interception";
-    if (p.isTurnover && /fumble/i.test(type + txt)) return "fumble recovery";
-    return "";
+    if (!off || off === who.nfl) return null;
+    if (td && /interception|fumble|return/i.test(type)) return r("defensive touchdown", sc("def_td"));
+    if (p.scoringPlay && p.scoreValue) return r(`gave up ${p.scoreValue} points`, null);
+    if (/sack/i.test(type)) return r("sack", sc("sack"));
+    if (/interception/i.test(type)) return r("interception", sc("int"));
+    if (p.isTurnover && /fumble/i.test(type + txt)) return r("fumble recovery", sc("fum_rec"));
+    return null;
   }
-  if (!who.last || !who.fi) return "";
-  const re = new RegExp("\\b" + escRe(who.fi) + "\\.\\s?" + escRe(who.last) + "\\b", "i");
-  if (!re.test(txt)) return "";
+  if (!who.last || !who.fi) return null;
+  const nm = escRe(who.fi) + "\\.\\s?" + escRe(who.last);
+  if (!new RegExp("\\b" + nm + "\\b", "i").test(txt)) return null;
   if (who.pos === "K") {
-    if (/field goal/i.test(type) && /good/i.test(type + txt)) return `${y}-yard field goal`;
-    if (new RegExp(escRe(who.last) + "[^.]*extra point is GOOD", "i").test(txt)) return "extra point";
-    return "";
+    const dist = +(txt.match(/(\d+)\s*yard field goal/i) || [])[1] || y;
+    if (/field goal/i.test(type) && /good/i.test(type + txt) && !/no good/i.test(txt)) {
+      const b = dist < 20 ? "fgm_0_19" : dist < 30 ? "fgm_20_29" : dist < 40 ? "fgm_30_39" : dist < 50 ? "fgm_40_49" : "fgm_50p";
+      return r(`${dist}-yard field goal`, SC[b] != null ? sc(b) : sc("fgm"));
+    }
+    if (/field goal/i.test(type)) return r(`missed ${dist}-yard field goal`, sc("fgmiss"));
+    if (new RegExp(escRe(who.last) + "[^.]*extra point is GOOD", "i").test(txt)) return r("extra point", sc("xpm"));
+    return null;
   }
-  const yd = w => y > 0 ? `${y}-yard ${w}` : y < 0 ? `${w} for a ${-y}-yard loss` : "";
-  const passer = new RegExp(escRe(who.fi) + "\\.\\s?" + escRe(who.last) + "\\s+pass", "i").test(txt);
-  if (/pass/i.test(type) && /incomplet|intercept/i.test(type)) return passer && /intercept/i.test(type) ? "interception thrown" : "";
+  const yd = w => y > 0 ? `${y}-yard ${w}` : `${w} for a ${-y}-yard loss`;
+  const passer = new RegExp(nm + "\\s+(pass|sacked)", "i").test(txt);
+  if (/sack/i.test(type)) return passer ? r(`sacked for a ${Math.abs(y)}-yard loss`, sc("pass_sack")) : null;
+  if (/intercept/i.test(type)) return passer ? r("interception thrown", sc("pass_int")) : null;
+  if (/incomplet/i.test(type)) return null;
+  if (p.isTurnover && /fumble/i.test(type + txt) && new RegExp(nm + "[^.]*FUMBLES", "i").test(txt)) return r("fumble lost", sc("fum_lost"));
   if (/reception|passing touchdown|pass/i.test(type) || / pass /.test(txt)) {
-    if (passer) return td ? `${y}-yard touchdown pass` : yd("completion");
-    return td ? `${y}-yard touchdown catch` : yd("reception");
+    if (!y && !td) return null;
+    if (passer) return r(td ? `${y}-yard touchdown pass` : yd("completion"), y * sc("pass_yd") + (td ? sc("pass_td") : 0));
+    return r(td ? `${y}-yard touchdown catch` : yd("reception"), sc("rec") + y * sc("rec_yd") + (td ? sc("rec_td") : 0));
   }
-  if (/rush/i.test(type) || /\b(left|right|up the middle)\b/.test(txt)) return td ? `${y}-yard touchdown run` : yd("run");
-  if (/fumble/i.test(type + txt) && p.isTurnover) return "fumble lost";
-  return "";
+  if (/rush/i.test(type) || /\b(left|right|up the middle|scrambles)\b/.test(txt)) {
+    if (!y && !td) return null;
+    return r(td ? `${y}-yard touchdown run` : yd("run"), y * sc("rush_yd") + (td ? sc("rush_td") : 0));
+  }
+  return null;
 }
-// ESPN play-by-play for the given NFL teams' games, newest first
+// ESPN play-by-play per game, newest first. A finished game is fetched once and kept.
+const PBP = {};
 async function pbp(wk, teams) {
   const evs = (wk.events || []).filter(e => e.teams.some(t => teams.has(t)));
-  const sums = await Promise.all(evs.map(e => get(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${e.id}`).catch(() => null)));
-  const plays = [];
-  sums.forEach(sm => {
-    if (!sm) return;
+  await Promise.all(evs.map(async e => {
+    if (PBP[e.id]?.done) return;
+    const sm = await get(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${e.id}`).catch(() => null); if (!sm) return;
     const ids = {}; for (const c of sm.header?.competitions?.[0]?.competitors || []) ids[c.team?.id ?? c.id] = ESPN2SLP[c.team?.abbreviation] || c.team?.abbreviation;
-    const teamOf = id => ids[id], gt = new Set(Object.values(ids));
+    const teamOf = id => ids[id], gt = new Set(Object.values(ids)), plays = [];
     const dr = [...(sm.drives?.previous || []), ...(sm.drives?.current ? [sm.drives.current] : [])];
     for (const d of dr) for (const p of d.plays || []) plays.push({ p, teamOf, gt, t: Date.parse(p.wallclock) || 0 });
-  });
-  return plays.sort((x, y) => y.t - x.t || (+y.p.sequenceNumber || 0) - (+x.p.sequenceNumber || 0));
+    PBP[e.id] = { done: e.s === "post", plays };
+  }));
+  return evs.flatMap(e => PBP[e.id]?.plays || []).sort((x, y) => y.t - x.t || (+y.p.sequenceNumber || 0) - (+x.p.sequenceNumber || 0));
 }
-// Live stats tell us WHO scored and how many points; the play-by-play tells us exactly WHAT happened.
-// (Stats can update a few plays at once, so describing from them alone can merge plays, e.g. a "118-yard touchdown pass".)
-async function describePlays(wk, fresh) {
-  if (!fresh.length) return;
-  const plays = await pbp(wk, new Set(fresh.map(f => f.w.nfl)));
-  for (const f of fresh) {
-    // only a play newer than the previous stat snapshot, and it must agree on whether it was a touchdown
-    const m = IMP[f.key]; if (!m) continue;
-    const hit = plays.find(x => x.gt.has(f.w.nfl) && x.t > f.since && espnPlay(x.p, f.w, x.teamOf));
-    const text = hit && espnPlay(hit.p, f.w, hit.teamOf);
-    if (!text || /touchdown/.test(text) !== m.td) continue;
-    m.play = text;
-  }
-  saveImp();
-}
-async function seedPlays(wk) {
-  // every team: a saved play can be stale (page was closed while games went on) or worded from merged stats,
-  // so ESPN's latest play wins unless the saved one is clearly newer (more than 5 minutes)
-  const need = wk.pairs.flatMap(([a, b]) => [a, b].map(id => ({ key: a + "-" + b + ":" + id, id })));
-  if (!need.length) return;
-  const teams = new Set(); need.forEach(n => Object.values(wk.teams[n.id].who).forEach(w => teams.add(w.nfl)));
+async function lastPlays(wk) {
+  if (!wk) return;
+  const teams = new Set(); wk.pairs.flat().forEach(id => Object.values(wk.teams[id].who).forEach(w => teams.add(w.nfl)));
   const plays = await pbp(wk, teams);
-  for (const { key, id } of need) {
-    outer: for (const { p, teamOf, gt, t } of plays) {
-      for (const pid in wk.teams[id].who) {
-        const w = wk.teams[id].who[pid]; if (!gt.has(w.nfl)) continue;
-        const text = espnPlay(p, w, teamOf);
-        if (text) { const old = IMP[key]; if (!old || !("play" in old) || (t && t > old.t - 300000)) IMP[key] = { t: t || Date.now(), rid: id, name: w.name, delta: null, play: text, td: /touchdown/.test(text) }; break outer; }
-      }
+  for (const [a, b] of wk.pairs) for (const id of [a, b]) {
+    const who = Object.values(wk.teams[id].who);
+    outer: for (const x of plays) for (const w of who) {
+      if (!x.gt.has(w.nfl)) continue;
+      const hit = espnPlay(x.p, w, x.teamOf);
+      if (hit) { IMP[a + "-" + b + ":" + id] = { t: x.t || Date.now(), rid: id, name: w.name, delta: hit.pts, play: hit.text, td: /touchdown/.test(hit.text) }; break outer; }
     }
   }
-  saveImp();
-}
-const statPts = (a, b) => { let p = 0; for (const k in SC) { const v = (b[k] || 0) - (a[k] || 0); if (v) p += v * SC[k]; } return Math.round(p * 100) / 100; };
-function trackPlays(wk, wp) {
-  const fresh = []; if (!wk) return fresh;
-  const first = !prevPP; if (first) prevPP = {};
-  for (const [a, b] of wk.pairs) {
-    const key = a + "-" + b, pNow = wp[key] ?? 0.5, side = (id, p) => id === a ? p : 1 - p;
-    if (!first) {
-      const best = {}; // most recent scoring play for each team
-      for (const id of [a, b]) for (const pid in wk.teams[id].st) {
-        const now = wk.teams[id].st[pid], was = prevPP[id]?.[pid];
-        if (!was) { (prevPP[id] ||= {})[pid] = now; continue; } // first sighting (a player's first play of the game still counts below)
-        const pts = statPts(was.s, now.s);
-        if (Math.abs(pts) < 0.05) continue;
-        const c = { id, pid, pts, text: playText(wk.teams[id].who[pid]?.pos, was.s, now.s), t: now.t, since: was.t || 0 };
-        prevPP[id][pid] = now; // every scoring change counts once; the most recent one is shown
-        if (!c.text) continue; // a stat correction with no actual play (e.g. +0.1) doesn't replace the last play
-        const o = best[id]; if (!o || c.t > o.t || (c.t === o.t && Math.abs(c.pts) > Math.abs(o.pts))) best[id] = c;
-      }
-      for (const id in best) {
-        const c = best[id], who = wk.teams[c.id].who[c.pid] || { name: "A starter" };
-        IMP[key + ":" + c.id] = { t: Math.min(Date.now(), c.t || Date.now()), rid: c.id, name: who.name, delta: c.pts, play: c.text,
-          td: /touchdown/.test(c.text), before: prevWP[key] != null ? side(c.id, prevWP[key]) : null, after: side(c.id, pNow) };
-        if (who.nfl) fresh.push({ key: key + ":" + c.id, w: who, since: c.since || c.t - 600000 });
-      }
-      if (Object.keys(best).length) prevWP[key] = pNow;
-    } else {
-      for (const id of [a, b]) prevPP[id] = { ...wk.teams[id].st };
-      prevWP[key] = pNow;
-    }
-  }
-  saveImp();
-  return fresh;
 }
 
 // ---------- hall of champions ----------
@@ -798,8 +723,7 @@ async function refresh() {
     const finalsNow = new Set((wkShown?.pairs || []).filter(([a, b]) => !wkShown.teams[a].items.length && !wkShown.teams[b].items.length).map(p => p.join("-")));
     const newFinals = prevFinals ? [...finalsNow].filter(k => !prevFinals.has(k)).length : 0; prevFinals = finalsNow;
 
-    if (!seeded && wkShown) { seeded = true; await seedPlays(wkShown).catch(() => {}); }
-    await describePlays(wkShown, trackPlays(wkShown, res.wp)).catch(() => {});
+    await lastPlays(wkShown).catch(() => {});
     const { base } = standings(L, R);
     const W = {}, PF = {}; ids.forEach(i => { W[i] = base[i].w; PF[i] = base[i].pf; });
     const seedOf = {};
