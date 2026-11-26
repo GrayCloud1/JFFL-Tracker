@@ -633,7 +633,8 @@ async function describePlays(wk, fresh) {
   saveImp();
 }
 async function seedPlays(wk) {
-  // every team: a saved play can be stale (page was closed while games went on), so ESPN's latest play wins if it's newer
+  // every team: a saved play can be stale (page was closed while games went on) or worded from merged stats,
+  // so ESPN's latest play wins unless the saved one is clearly newer (more than 5 minutes)
   const need = wk.pairs.flatMap(([a, b]) => [a, b].map(id => ({ key: a + "-" + b + ":" + id, id })));
   if (!need.length) return;
   const teams = new Set(); need.forEach(n => Object.values(wk.teams[n.id].who).forEach(w => teams.add(w.nfl)));
@@ -643,7 +644,7 @@ async function seedPlays(wk) {
       for (const pid in wk.teams[id].who) {
         const w = wk.teams[id].who[pid]; if (!gt.has(w.nfl)) continue;
         const text = espnPlay(p, w, teamOf);
-        if (text) { const old = IMP[key]; if (!old || !("play" in old) || (t && t > old.t)) IMP[key] = { t: t || Date.now(), rid: id, name: w.name, delta: null, play: text, td: /touchdown/.test(text) }; break outer; }
+        if (text) { const old = IMP[key]; if (!old || !("play" in old) || (t && t > old.t - 300000)) IMP[key] = { t: t || Date.now(), rid: id, name: w.name, delta: null, play: text, td: /touchdown/.test(text) }; break outer; }
       }
     }
   }
