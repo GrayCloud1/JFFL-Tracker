@@ -25,8 +25,11 @@ let prevFinals = null, T = {}, nextAt = 0, lastFetch = 0, lastChange = 0, lastSi
 const PV = {}, openRows = new Set();
 // last big play per matchup: built by comparing each starter's points between refreshes
 let prevPP = null, prevWP = {}, IMP = {}, impKey = "", SC = {};
-function loadImp(key) { if (impKey === key) return; impKey = key; prevPP = null; prevWP = {}; try { IMP = JSON.parse(localStorage.getItem(key) || "{}"); } catch { IMP = {}; } }
-function saveImp() { try { localStorage.setItem(impKey, JSON.stringify(IMP)); } catch {} }
+// The stat snapshot is saved too, so a reload picks up every play since the last visit instead of starting over.
+function loadImp(key) { if (impKey === key) return; impKey = key; prevWP = {};
+  try { IMP = JSON.parse(localStorage.getItem(key) || "{}"); } catch { IMP = {}; }
+  try { prevPP = JSON.parse(localStorage.getItem(key + ":base") || "null"); } catch { prevPP = null; } }
+function saveImp() { try { localStorage.setItem(impKey, JSON.stringify(IMP)); localStorage.setItem(impKey + ":base", JSON.stringify(prevPP)); } catch {} }
 
 function gauss() { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
 const color = id => PAL[(id - 1) % PAL.length];
@@ -567,7 +570,7 @@ function trackPlays(wk, wp) {
       }
       if (best) {
         const who = wk.teams[best.id].who[best.pid] || { name: "A starter" };
-        IMP[key] = { t: Date.now(), rid: best.id, name: who.name, delta: best.pts, play: best.text,
+        IMP[key] = { t: Math.min(Date.now(), best.t || Date.now()), rid: best.id, name: who.name, delta: best.pts, play: best.text,
           td: /touchdown/.test(best.text), before: prevWP[key] != null ? side(best.id, prevWP[key]) : null, after: side(best.id, pNow) };
         prevWP[key] = pNow;
       }
