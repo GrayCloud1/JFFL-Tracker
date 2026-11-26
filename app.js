@@ -41,7 +41,8 @@ function shortName(name) {
   return s.length > 12 ? s.slice(0, 11) + "…" : s;
 }
 const code = id => T[id].short;
-const mono = (id, cls = "") => `<span class="mono ${cls}" style="background:${color(id)}" aria-hidden="true">${esc(initials(T[id].name))}${T[id].img ? `<img src="${esc(T[id].img)}" alt="" loading="lazy" onerror="this.remove()">` : ""}</span>`;
+// every team avatar gets a ring in the team's color, so it matches the title bar, trend chart and matchup meters
+const mono = (id, cls = "") => `<span class="mono ring ${cls}" style="--ring:${color(id)};background:${color(id)}" aria-hidden="true">${esc(initials(T[id].name))}${T[id].img ? `<img src="${esc(T[id].img)}" alt="" loading="lazy" onerror="this.remove()">` : ""}</span>`;
 const nm = id => esc(T[id].name);
 const anim = (k, v, f = "p") => `data-k="${k}" data-v="${v}" data-f="${f}"`;
 function heat(p, k) {
@@ -314,7 +315,7 @@ function renderNeeds(res, mode, ids, wk) {
     const n = needsFor(i, res, mode, wk);
     const [hiT, midT] = mode === "race" ? [0.75, 0.4] : [0.3, 0.12];
     const tone = n.p >= hiT ? "var(--fav)" : n.p >= midT ? "var(--y)" : "var(--dog)";
-    return `<article class="card need" style="--tone:${tone}"><div class="nh">${mono(i, "lg")}<div class="nt"><div class="n">${nm(i)}</div><div class="hd">${esc(n.head)}</div></div>
+    return `<article class="card need" style="--tone:${tone};--team:${color(i)}"><div class="nh">${mono(i, "lg")}<div class="nt"><div class="n">${nm(i)}</div><div class="hd">${esc(n.head)}</div></div>
       <div class="np"><span ${anim("n" + i, n.p, "pw")}>${fpw(n.p)}</span><small>${n.label}</small></div></div>
       ${n.chips.length ? `<div class="chips">${n.chips.map(([t, v], j) => `<span class="chip"><small>${t}</small><b ${anim("c" + i + "_" + j, v, "pw")}>${fpw(v)}</b></span>`).join("")}</div>` : ""}
       <ul>${n.lines.map(l => `<li>${l}</li>`).join("")}</ul></article>`;
@@ -337,7 +338,7 @@ function renderTitleBar(res, ids) {
   const list = ids.filter(i => res.O[i].champ > 0.0005).sort((a, b) => res.O[b].champ - res.O[a].champ);
   $("tbWrap").hidden = !list.length; if (!list.length) return;
   $("tbBar").innerHTML = list.map(i => { const p = res.O[i].champ;
-    return `<div class="seg2" style="flex:${p} 1 0;background:${color(i)}" title="${nm(i)}: ${fp(p)}">${p >= 0.09 ? `${mono(i, "sm")}<b>${fp(p)}</b>` : ""}</div>`; }).join("");
+    return `<div class="seg2" style="flex:${p} 1 0;background:${color(i)}" title="${nm(i)}: ${fp(p)}">${p >= 0.09 ? `${mono(i, "sm")}<b>${fp(p)}</b>` : p >= 0.03 ? mono(i, "sm") : ""}</div>`; }).join("");
 }
 
 function detailRow(i, res, mode, wk, span) {
@@ -365,7 +366,8 @@ function renderTable(res, mode, alive, wk) {
   $("fBody").innerHTML = ids.map((i, k) => {
     const o = O[i], b = base[i];
     const recTxt = o.wMin === o.wMax && mode === "race" ? `${o.wMin}-${b.w + b.l + res.gpw - o.wMin}` : `${b.w}-${b.l}`;
-    const d = first && first[i] != null ? Math.round((metric(i) - first[i]) * 100) : 0;
+    // skip the arrow for a team that wasn't in the playoff picture when the history started (e.g. added to the bracket later)
+    const d = first && first[i] != null && !(mode !== "race" && first[i] <= 0.0005) ? Math.round((metric(i) - first[i]) * 100) : 0;
     const seed = mode === "race" ? o.seeds.indexOf(Math.max(...o.seeds)) + 1 : 0;
     const sub = `${recTxt}${b.t ? "-" + b.t : ""} · ${f1(b.pf + (res.wkLive?.[i] ?? 0))} PF${mode === "race" && o.make >= 0.5 ? ` · ${o.make >= 0.9995 ? "" : "proj. "}${ord(seed)} seed` : ""}`;
     const cells = mode === "race" ? [o.make, o.bye, o.final, o.champ] : [o.final, o.champ];
@@ -665,7 +667,19 @@ async function refresh() {
     const { base } = standings(L, R);
     const W = {}, PF = {}; ids.forEach(i => { W[i] = base[i].w; PF[i] = base[i].pf; });
     const seedOf = {};
-    if (mode === "race") (res.field || []).forEach((i, k) => seedOf[i] = k + 1); else seedField(ids, W, PF, P, wc).forEach((i, k) => seedOf[i] = k + 1);
+    if (mode === "race") (res.field || []).forEach((i, k) => seedOf[i] = k + 1);
+    else {
+      // seeds come from the bracket Sleeper actually has (the commissioner can edit it), using standings only to order teams
+      const order = seedField(ids, W, PF, ids.length, 0), rank = i => { const k = order.indexOf(i); return k < 0 ? 99 : k; }, by = (a, b) => rank(a) - rank(b);
+      const r1 = res.br.filter(m => m.r === 1 && m.t1 && m.t2), r2 = res.br.filter(m => m.r === 2);
+      const byes = r2.map(m => m.t1 ?? m.t2).filter(x => x != null && !r1.some(g => g.t1 === x || g.t2 === x)).sort(by);
+      if (P === 6 && r1.length === 2 && byes.length === 2) {
+        const m1 = r2.find(m => (m.t1 ?? m.t2) === byes[0]), f = m1 && (m1.t1 === byes[0] ? m1.t2_from : m1.t1_from);
+        const g45 = r1.find(g => f && g.m === (f.w || f.l)) || r1[0], g36 = r1.find(g => g !== g45);
+        const [s4, s5] = [g45.t1, g45.t2].sort(by), [s3, s6] = [g36.t1, g36.t2].sort(by);
+        [byes[0], byes[1], s3, s4, s5, s6].forEach((i, k) => seedOf[i] = k + 1);
+      } else seedField(ids, W, PF, P, wc).forEach((i, k) => seedOf[i] = k + 1);
+    }
 
     $("title").textContent = mode === "race" ? (alive.length ? "Playoff Forecast" : "Championship Forecast") : "Championship Forecast";
     renderTicker(wkShown, res.wp, labels);
