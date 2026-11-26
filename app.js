@@ -431,7 +431,7 @@ function needle(p, ca, cb) {
 }
 
 function impactBox(key) {
-  const m = IMP[key]; if (!m || !T[m.rid]) return "";
+  const m = IMP[key]; if (!m || !T[m.rid] || !("play" in m)) return ""; // only scoring plays (older saved entries are skipped)
   const mins = Math.round((Date.now() - m.t) / 60000), ago = mins < 1 ? "just now" : mins < 60 ? mins + "m ago" : Math.round(mins / 60) + "h ago";
   const pts = d => `${d >= 0 ? "+" : "−"}${f1(Math.abs(d))} pts`;
   const what = m.play ? esc(m.play[0].toUpperCase() + m.play.slice(1)) : m.desc ? esc(m.desc.length > 120 ? m.desc.slice(0, 117) + "…" : m.desc) : esc(m.name) + " " + pts(m.delta);
@@ -551,8 +551,6 @@ function playText(pos, a, b) {
 const statPts = (a, b) => { let p = 0; for (const k in SC) { const v = (b[k] || 0) - (a[k] || 0); if (v) p += v * SC[k]; } return Math.round(p * 100) / 100; };
 function trackPlays(wk, wp) {
   if (!wk) return;
-  const describe = (w, pid) => { const who = w.who[pid], pl = who && wk.plays?.[who.nfl];
-    return pl && who.last.length > 2 && new RegExp("\\b" + who.last.replace(/[^A-Za-z'-]/g, "") + "\\b", "i").test(pl.text) ? pl : null; };
   const first = !prevPP; if (first) prevPP = {};
   for (const [a, b] of wk.pairs) {
     const key = a + "-" + b, pNow = wp[key] ?? 0.5, side = (id, p) => id === a ? p : 1 - p;
@@ -576,9 +574,6 @@ function trackPlays(wk, wp) {
     } else {
       for (const id of [a, b]) prevPP[id] = { ...wk.teams[id].st };
       prevWP[key] = pNow;
-      // first load: show the latest live play that involves one of these starters, if ESPN has it
-      if (!IMP[key]) for (const id of [a, b]) for (const pid in wk.teams[id].pp) { const pl = describe(wk.teams[id], pid);
-        if (pl && !IMP[key]) IMP[key] = { t: Date.now(), rid: id, name: wk.teams[id].who[pid].name, desc: pl.text, when: pl.when, td: /touchdown/i.test(pl.text) }; }
     }
   }
   saveImp();
