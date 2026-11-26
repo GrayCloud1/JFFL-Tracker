@@ -558,10 +558,10 @@ function playText(pos, a, b) {
     return t.join(", ");
   }
   const t = [];
-  if (d("pass_cmp") > 0 || d("pass_td") > 0) t.push(d("pass_td") > 0 ? `${n("pass_yd")}-yard touchdown pass` : d("pass_cmp") > 1 ? `${n("pass_cmp")} completions for ${n("pass_yd")} yards` : yds(n("pass_yd"), "completion"));
+  if (d("pass_cmp") > 0 || d("pass_td") > 0) t.push(d("pass_td") > 0 ? (d("pass_cmp") > 1 ? "touchdown pass" : `${n("pass_yd")}-yard touchdown pass`) : d("pass_cmp") > 1 ? `${n("pass_cmp")} completions for ${n("pass_yd")} yards` : yds(n("pass_yd"), "completion"));
   if (d("pass_int") > 0) t.push("interception thrown");
-  if (d("rec") > 0 || d("rec_td") > 0) t.push(d("rec_td") > 0 ? `${n("rec_yd")}-yard touchdown catch` : d("rec") > 1 ? `${n("rec")} catches for ${n("rec_yd")} yards` : yds(n("rec_yd"), "reception"));
-  if (d("rush_att") > 0 || d("rush_td") > 0) t.push(d("rush_td") > 0 ? `${n("rush_yd")}-yard touchdown run` : d("rush_att") > 1 ? `${n("rush_att")} carries for ${n("rush_yd")} yards` : yds(n("rush_yd"), "run"));
+  if (d("rec") > 0 || d("rec_td") > 0) t.push(d("rec_td") > 0 ? (d("rec") > 1 ? "touchdown catch" : `${n("rec_yd")}-yard touchdown catch`) : d("rec") > 1 ? `${n("rec")} catches for ${n("rec_yd")} yards` : yds(n("rec_yd"), "reception"));
+  if (d("rush_att") > 0 || d("rush_td") > 0) t.push(d("rush_td") > 0 ? (d("rush_att") > 1 ? "touchdown run" : `${n("rush_yd")}-yard touchdown run`) : d("rush_att") > 1 ? `${n("rush_att")} carries for ${n("rush_yd")} yards` : yds(n("rush_yd"), "run"));
   if (d("pass_2pt") + d("rush_2pt") + d("rec_2pt") > 0) t.push("2-point conversion");
   if (d("fum_lost") > 0) t.push("fumble lost");
   return t.join(", ");
@@ -603,11 +603,8 @@ function espnPlay(p, who, teamOf) {
   if (/fumble/i.test(type + txt) && p.isTurnover) return "fumble lost";
   return "";
 }
-async function seedPlays(wk) {
-  // every team: a saved play can be stale (page was closed while games went on), so ESPN's latest play wins if it's newer
-  const need = wk.pairs.flatMap(([a, b]) => [a, b].map(id => ({ key: a + "-" + b + ":" + id, id })));
-  if (!need.length) return;
-  const teams = new Set(); need.forEach(n => Object.values(wk.teams[n.id].who).forEach(w => teams.add(w.nfl)));
+// ESPN play-by-play for the given NFL teams' games, newest first
+async function pbp(wk, teams) {
   const evs = (wk.events || []).filter(e => e.teams.some(t => teams.has(t)));
   const sums = await Promise.all(evs.map(e => get(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${e.id}`).catch(() => null)));
   const plays = [];
@@ -618,7 +615,29 @@ async function seedPlays(wk) {
     const dr = [...(sm.drives?.previous || []), ...(sm.drives?.current ? [sm.drives.current] : [])];
     for (const d of dr) for (const p of d.plays || []) plays.push({ p, teamOf, gt, t: Date.parse(p.wallclock) || 0 });
   });
-  plays.sort((x, y) => y.t - x.t || (+y.p.sequenceNumber || 0) - (+x.p.sequenceNumber || 0));
+  return plays.sort((x, y) => y.t - x.t || (+y.p.sequenceNumber || 0) - (+x.p.sequenceNumber || 0));
+}
+// Live stats tell us WHO scored and how many points; the play-by-play tells us exactly WHAT happened.
+// (Stats can update a few plays at once, so describing from them alone can merge plays, e.g. a "118-yard touchdown pass".)
+async function describePlays(wk, fresh) {
+  if (!fresh.length) return;
+  const plays = await pbp(wk, new Set(fresh.map(f => f.w.nfl)));
+  for (const f of fresh) {
+    // only a play newer than the previous stat snapshot, and it must agree on whether it was a touchdown
+    const m = IMP[f.key]; if (!m) continue;
+    const hit = plays.find(x => x.gt.has(f.w.nfl) && x.t > f.since && espnPlay(x.p, f.w, x.teamOf));
+    const text = hit && espnPlay(hit.p, f.w, hit.teamOf);
+    if (!text || /touchdown/.test(text) !== m.td) continue;
+    m.play = text;
+  }
+  saveImp();
+}
+async function seedPlays(wk) {
+  // every team: a saved play can be stale (page was closed while games went on), so ESPN's latest play wins if it's newer
+  const need = wk.pairs.flatMap(([a, b]) => [a, b].map(id => ({ key: a + "-" + b + ":" + id, id })));
+  if (!need.length) return;
+  const teams = new Set(); need.forEach(n => Object.values(wk.teams[n.id].who).forEach(w => teams.add(w.nfl)));
+  const plays = await pbp(wk, teams);
   for (const { key, id } of need) {
     outer: for (const { p, teamOf, gt, t } of plays) {
       for (const pid in wk.teams[id].who) {
@@ -632,7 +651,7 @@ async function seedPlays(wk) {
 }
 const statPts = (a, b) => { let p = 0; for (const k in SC) { const v = (b[k] || 0) - (a[k] || 0); if (v) p += v * SC[k]; } return Math.round(p * 100) / 100; };
 function trackPlays(wk, wp) {
-  if (!wk) return;
+  const fresh = []; if (!wk) return fresh;
   const first = !prevPP; if (first) prevPP = {};
   for (const [a, b] of wk.pairs) {
     const key = a + "-" + b, pNow = wp[key] ?? 0.5, side = (id, p) => id === a ? p : 1 - p;
@@ -643,7 +662,7 @@ function trackPlays(wk, wp) {
         if (!was) { (prevPP[id] ||= {})[pid] = now; continue; } // first sighting (a player's first play of the game still counts below)
         const pts = statPts(was.s, now.s);
         if (Math.abs(pts) < 0.05) continue;
-        const c = { id, pid, pts, text: playText(wk.teams[id].who[pid]?.pos, was.s, now.s), t: now.t };
+        const c = { id, pid, pts, text: playText(wk.teams[id].who[pid]?.pos, was.s, now.s), t: now.t, since: was.t || 0 };
         prevPP[id][pid] = now; // every scoring change counts once; the most recent one is shown
         if (!c.text) continue; // a stat correction with no actual play (e.g. +0.1) doesn't replace the last play
         const o = best[id]; if (!o || c.t > o.t || (c.t === o.t && Math.abs(c.pts) > Math.abs(o.pts))) best[id] = c;
@@ -652,6 +671,7 @@ function trackPlays(wk, wp) {
         const c = best[id], who = wk.teams[c.id].who[c.pid] || { name: "A starter" };
         IMP[key + ":" + c.id] = { t: Math.min(Date.now(), c.t || Date.now()), rid: c.id, name: who.name, delta: c.pts, play: c.text,
           td: /touchdown/.test(c.text), before: prevWP[key] != null ? side(c.id, prevWP[key]) : null, after: side(c.id, pNow) };
+        if (who.nfl) fresh.push({ key: key + ":" + c.id, w: who, since: c.since || c.t - 600000 });
       }
       if (Object.keys(best).length) prevWP[key] = pNow;
     } else {
@@ -660,6 +680,7 @@ function trackPlays(wk, wp) {
     }
   }
   saveImp();
+  return fresh;
 }
 
 // ---------- hall of champions ----------
@@ -777,7 +798,7 @@ async function refresh() {
     const newFinals = prevFinals ? [...finalsNow].filter(k => !prevFinals.has(k)).length : 0; prevFinals = finalsNow;
 
     if (!seeded && wkShown) { seeded = true; await seedPlays(wkShown).catch(() => {}); }
-    trackPlays(wkShown, res.wp);
+    await describePlays(wkShown, trackPlays(wkShown, res.wp)).catch(() => {});
     const { base } = standings(L, R);
     const W = {}, PF = {}; ids.forEach(i => { W[i] = base[i].w; PF[i] = base[i].pf; });
     const seedOf = {};
