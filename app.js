@@ -24,7 +24,7 @@ const left = t => t.items.filter(i => !i.fut).length; // starters still to play 
 let prevFinals = null, T = {}, nextAt = 0, lastFetch = 0, lastChange = 0, lastSig = "", timer = null, anyLive = false, histKey = "", hist = [];
 const PV = {}, openRows = new Set();
 // last big play per matchup: built by comparing each starter's points between refreshes
-let prevPP = null, prevWP = {}, IMP = {}, impKey = "";
+let prevPP = null, prevWP = {}, IMP = {}, impKey = "", SC = {};
 function loadImp(key) { if (impKey === key) return; impKey = key; prevPP = null; prevWP = {}; try { IMP = JSON.parse(localStorage.getItem(key) || "{}"); } catch { IMP = {}; } }
 function saveImp() { try { localStorage.setItem(impKey, JSON.stringify(IMP)); } catch {} }
 
@@ -96,28 +96,31 @@ async function gameClock(season, week) {
 }
 
 async function liveWeek(L, week) {
-  const [mus, proj, clock] = await Promise.all([
+  const [mus, proj, clock, stats] = await Promise.all([
     get(`${S}/league/${C.leagueId}/matchups/${week}`),
     get(`${S2}/projections/nfl/${L.season}/${week}?season_type=regular&${POS}`),
-    gameClock(L.season, week)
+    gameClock(L.season, week),
+    get(`${S2}/stats/nfl/${L.season}/${week}?season_type=regular&${POS}`).catch(() => []) // live box-score stats, used to describe plays
   ]);
+  SC = L.scoring_settings || {};
+  const ST = {}; for (const x of stats || []) ST[x.player_id] = { s: x.stats || {}, t: x.updated_at || 0 };
   const rec = L.scoring_settings.rec, key = rec >= 1 ? "pts_ppr" : rec >= 0.5 ? "pts_half_ppr" : "pts_std";
   const P = {}; for (const p of proj) P[p.player_id] = p;
   const teams = {};
   for (const m of mus) {
-    const items = [], pp = {}, who = {};
+    const items = [], pp = {}, who = {}, st = {};
     (m.starters || []).forEach(pid => {
       if (!pid || pid === "0") return;
-      pp[pid] = (m.players_points || {})[pid] || 0;
+      pp[pid] = (m.players_points || {})[pid] || 0; st[pid] = ST[pid] || { s: {}, t: 0 };
       const p = P[pid]; if (!p) return;
       const nfl = p.team, f = clock.frac[nfl] ?? 0;
       let mu = (p.stats && p.stats[key]) || 0;
       if (f === 1 && ["Out", "IR", "Sus", "PUP"].includes(p.player && p.player.injury_status)) mu = 0;
       const pl = p.player || {}, name = pl.position === "DEF" ? `${nfl} D/ST` : pl.last_name ? `${(pl.first_name || "")[0] ? pl.first_name[0] + ". " : ""}${pl.last_name}` : `${nfl} ${pl.position || "player"}`;
-      who[pid] = { name, last: pl.last_name || "", nfl };
+      who[pid] = { name, last: pl.last_name || "", nfl, pos: pl.position || "" };
       if (f > 0 && mu > 0) items.push({ nfl, mu: mu * f, sd: 0.62 * mu * Math.sqrt(f), name, pos: pl.position || "", f });
     });
-    teams[m.roster_id] = { live: m.custom_points ?? m.points ?? 0, items, pp, who };
+    teams[m.roster_id] = { live: m.custom_points ?? m.points ?? 0, items, pp, who, st };
   }
   return { week, teams, pairs: pairsOf(mus), live: clock.live, plays: clock.plays, next: clock.next };
 }
@@ -431,14 +434,11 @@ function impactBox(key) {
   const m = IMP[key]; if (!m || !T[m.rid]) return "";
   const mins = Math.round((Date.now() - m.t) / 60000), ago = mins < 1 ? "just now" : mins < 60 ? mins + "m ago" : Math.round(mins / 60) + "h ago";
   const pts = d => `${d >= 0 ? "+" : "−"}${f1(Math.abs(d))} pts`;
-  const head = m.desc ? esc(m.desc.length > 150 ? m.desc.slice(0, 147) + "…" : m.desc) : `<b>${esc(m.name)}</b> ${pts(m.delta)}`;
-  let sub = "";
-  if (m.delta != null) {
-    sub = `<br><span class="mt">${m.desc ? `${esc(m.name)} ${pts(m.delta)} for ${esc(code(m.rid))}` : "for " + esc(code(m.rid))}</span>`;
-    if (m.before != null) { const d = Math.round((m.after - m.before) * 100);
-      sub += ` <span class="mt">· win odds</span> <b>${Math.round(m.before * 100)}% → ${Math.round(m.after * 100)}%</b>${d ? ` <span class="${d > 0 ? "up" : "dn"}">${d > 0 ? "▲" : "▼"}${Math.abs(d)}</span>` : ""}`; }
-  }
-  return `<div class="imp${mins < 1 ? " new" : ""}"><span class="dot"></span><div>${m.td ? '<span class="tdtag">TOUCHDOWN</span>' : `<span class="mt">${m.delta != null && Math.abs(m.delta) < 3 ? "Latest play" : "Last big play"} · </span>`}${head} <span class="mt">· ${m.when ? esc(m.when) + ", " : ""}${ago}</span>${sub}</div></div>`;
+  const what = m.play ? esc(m.play[0].toUpperCase() + m.play.slice(1)) : m.desc ? esc(m.desc.length > 120 ? m.desc.slice(0, 117) + "…" : m.desc) : esc(m.name) + " " + pts(m.delta);
+  let sub = m.delta != null ? `${esc(m.name)} ${pts(m.delta)} for ${esc(code(m.rid))}` : m.desc ? `${esc(m.name)} · ${esc(code(m.rid))}` : "";
+  if (m.before != null) { const d = Math.round((m.after - m.before) * 100);
+    sub += ` · win odds <b>${Math.round(m.before * 100)}% → ${Math.round(m.after * 100)}%</b>${d ? ` <span class="${d > 0 ? "up" : "dn"}">${d > 0 ? "▲" : "▼"}${Math.abs(d)}</span>` : ""}`; }
+  return `<div class="imp${mins < 1 ? " new" : ""}"><span class="dot"></span><div><span class="mt">Last play · </span>${m.td ? '<span class="tdtag">TD</span>' : ""}<b>${what}</b> <span class="mt">· ${ago}</span>${sub ? `<br><span class="mt">${sub}</span>` : ""}</div></div>`;
 }
 
 function renderGames(wk, res, title, labels) {
@@ -519,36 +519,65 @@ function renderTrend(ids, heading) {
   $("legend").innerHTML = "";
 }
 
-// Track each starter's points against a running baseline. Small gains (a 4-yard run is 0.4 pts) add up
-// until they reach half a point, then the biggest change in the matchup becomes its latest play,
-// described with ESPN's last-play text when that text names the player.
+// "Last play": every refresh, compare each starter's live box-score stats with what we saw before.
+// Any change that moves their fantasy score (using this league's scoring) becomes the matchup's
+// last play, described from the stat change, e.g. "30-yard reception" or "42-yard field goal".
+function playText(pos, a, b) {
+  const d = k => (b[k] || 0) - (a[k] || 0), n = k => Math.round(d(k));
+  const yds = (v, what) => v > 0 ? `${v}-yard ${what}` : v < 0 ? `${what} for a ${-v}-yard loss` : `no-gain ${what}`;
+  if (pos === "DEF") {
+    const t = [];
+    if (d("def_td") > 0 || d("def_st_td") > 0) t.push("defensive touchdown");
+    if (d("int") > 0) t.push("interception"); if (d("fum_rec") > 0) t.push("fumble recovery");
+    if (d("sack") > 0) t.push(d("sack") > 1 ? `${n("sack")} sacks` : "sack"); if (d("safe") > 0) t.push("safety");
+    if (d("blk_kick") > 0) t.push("blocked kick"); if (d("pts_allow") > 0) t.push(`gave up ${n("pts_allow")} points`);
+    return t.join(", ");
+  }
+  if (pos === "K") {
+    const t = [];
+    if (d("fgm") > 0) t.push(d("fgm") === 1 && d("fgm_yds") > 0 ? `${n("fgm_yds")}-yard field goal` : d("fgm") > 1 ? `${n("fgm")} field goals` : "field goal");
+    if (d("fgmiss") > 0) t.push("missed field goal"); if (d("xpm") > 0) t.push(d("xpm") > 1 ? `${n("xpm")} extra points` : "extra point"); if (d("xpmiss") > 0) t.push("missed extra point");
+    return t.join(", ");
+  }
+  const t = [];
+  if (d("pass_cmp") > 0 || d("pass_td") > 0) t.push(d("pass_td") > 0 ? `${n("pass_yd")}-yard touchdown pass` : d("pass_cmp") > 1 ? `${n("pass_cmp")} completions for ${n("pass_yd")} yards` : yds(n("pass_yd"), "completion"));
+  if (d("pass_int") > 0) t.push("interception thrown");
+  if (d("rec") > 0 || d("rec_td") > 0) t.push(d("rec_td") > 0 ? `${n("rec_yd")}-yard touchdown catch` : d("rec") > 1 ? `${n("rec")} catches for ${n("rec_yd")} yards` : yds(n("rec_yd"), "reception"));
+  if (d("rush_att") > 0 || d("rush_td") > 0) t.push(d("rush_td") > 0 ? `${n("rush_yd")}-yard touchdown run` : d("rush_att") > 1 ? `${n("rush_att")} carries for ${n("rush_yd")} yards` : yds(n("rush_yd"), "run"));
+  if (d("pass_2pt") + d("rush_2pt") + d("rec_2pt") > 0) t.push("2-point conversion");
+  if (d("fum_lost") > 0) t.push("fumble lost");
+  return t.join(", ");
+}
+const statPts = (a, b) => { let p = 0; for (const k in SC) { const v = (b[k] || 0) - (a[k] || 0); if (v) p += v * SC[k]; } return Math.round(p * 100) / 100; };
 function trackPlays(wk, wp) {
   if (!wk) return;
-  const nowPP = {}; for (const id in wk.teams) nowPP[id] = wk.teams[id].pp || {};
   const describe = (w, pid) => { const who = w.who[pid], pl = who && wk.plays?.[who.nfl];
     return pl && who.last.length > 2 && new RegExp("\\b" + who.last.replace(/[^A-Za-z'-]/g, "") + "\\b", "i").test(pl.text) ? pl : null; };
   const first = !prevPP; if (first) prevPP = {};
   for (const [a, b] of wk.pairs) {
-    const key = a + "-" + b, pNow = wp[key] ?? 0.5;
+    const key = a + "-" + b, pNow = wp[key] ?? 0.5, side = (id, p) => id === a ? p : 1 - p;
     if (!first) {
       let best = null;
-      for (const id of [a, b]) for (const pid in nowPP[id]) {
-        const base = prevPP[id]?.[pid];
-        if (base == null) { (prevPP[id] ||= {})[pid] = nowPP[id][pid]; continue; }
-        const d = nowPP[id][pid] - base;
-        if (Math.abs(d) >= 0.5 && (!best || Math.abs(d) > Math.abs(best.d))) best = { id, pid, d };
+      for (const id of [a, b]) for (const pid in wk.teams[id].st) {
+        const now = wk.teams[id].st[pid], was = prevPP[id]?.[pid];
+        if (!was || !Object.keys(was.s).length) { (prevPP[id] ||= {})[pid] = now; continue; } // first sighting or game just started
+        const pts = statPts(was.s, now.s);
+        if (Math.abs(pts) < 0.05) continue;
+        const c = { id, pid, pts, text: playText(wk.teams[id].who[pid]?.pos, was.s, now.s), t: now.t };
+        prevPP[id][pid] = now; // every scoring change counts once; the most recent one is shown
+        if (!best || c.t > best.t || (c.t === best.t && Math.abs(c.pts) > Math.abs(best.pts))) best = c;
       }
       if (best) {
-        const w = wk.teams[best.id], who = w.who[best.pid] || { name: "A starter" }, pl = describe(w, best.pid), side = p => best.id === a ? p : 1 - p;
-        IMP[key] = { t: Date.now(), rid: best.id, name: who.name, delta: best.d, desc: pl?.text || "", when: pl?.when || "",
-          td: best.d >= 5.5 || /touchdown/i.test(pl?.text || ""), before: prevWP[key] != null ? side(prevWP[key]) : null, after: side(pNow) };
-        prevPP[best.id][best.pid] = nowPP[best.id][best.pid]; prevWP[key] = pNow;
+        const who = wk.teams[best.id].who[best.pid] || { name: "A starter" };
+        IMP[key] = { t: Date.now(), rid: best.id, name: who.name, delta: best.pts, play: best.text,
+          td: /touchdown/.test(best.text), before: prevWP[key] != null ? side(best.id, prevWP[key]) : null, after: side(best.id, pNow) };
+        prevWP[key] = pNow;
       }
     } else {
-      for (const id of [a, b]) prevPP[id] = { ...nowPP[id] };
+      for (const id of [a, b]) prevPP[id] = { ...wk.teams[id].st };
       prevWP[key] = pNow;
-      // first load: show the latest live play that involves one of these starters, if any
-      if (!IMP[key]) for (const id of [a, b]) for (const pid in nowPP[id]) { const pl = describe(wk.teams[id], pid);
+      // first load: show the latest live play that involves one of these starters, if ESPN has it
+      if (!IMP[key]) for (const id of [a, b]) for (const pid in wk.teams[id].pp) { const pl = describe(wk.teams[id], pid);
         if (pl && !IMP[key]) IMP[key] = { t: Date.now(), rid: id, name: wk.teams[id].who[pid].name, desc: pl.text, when: pl.when, td: /touchdown/i.test(pl.text) }; }
     }
   }
