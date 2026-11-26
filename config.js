@@ -9,7 +9,7 @@ window.TRACKER_CONFIG = {
 
   // How often the page refreshes, in seconds: while NFL games are live, and otherwise.
   // The page stops refreshing entirely while it's in the background.
-  refreshSeconds: 20,
+  refreshSeconds: 10,
   idleRefreshSeconds: 120,
 
   // Short names shown in tight spots (scores ticker, matchup lines, chart labels on phones).

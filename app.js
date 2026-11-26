@@ -723,7 +723,6 @@ async function refresh() {
     const finalsNow = new Set((wkShown?.pairs || []).filter(([a, b]) => !wkShown.teams[a].items.length && !wkShown.teams[b].items.length).map(p => p.join("-")));
     const newFinals = prevFinals ? [...finalsNow].filter(k => !prevFinals.has(k)).length : 0; prevFinals = finalsNow;
 
-    await lastPlays(wkShown).catch(() => {});
     const { base } = standings(L, R);
     const W = {}, PF = {}; ids.forEach(i => { W[i] = base[i].w; PF[i] = base[i].pf; });
     const seedOf = {};
@@ -747,7 +746,10 @@ async function refresh() {
     renderNeeds(res, mode === "race" ? (alive.length ? "race" : "none") : "playoffs", ids, wkShown);
     renderTable(res, mode, alive, wkShown);
     renderBracket(res, mode === "race" ? (res.field ? seedBracket(res.field) : null) : res.br, mode, wkShown, res.round, seedOf, mode === "race" && !alive.length);
-    renderGames(wkShown, res, wkShown?.live?.length ? "Live games" : mode === "race" ? `Week ${wkShown?.week ?? ""} matchups` : "This week's games", labels);
+    const gTitle = wkShown?.live?.length ? "Live games" : mode === "race" ? `Week ${wkShown?.week ?? ""} matchups` : "This week's games";
+    renderGames(wkShown, res, gTitle, labels);
+    // scores are on screen first; the play-by-play loads after and the game cards redraw with each team's last play
+    lastPlays(wkShown).then(() => renderGames(wkShown, res, gTitle, labels)).catch(() => {});
     const contenders = ids.filter(i => metricOf(i) > 0.0005);
     const ever = [...new Set(hist.flatMap(h => Object.keys(h.m || {}).filter(i => h.m[i] > 0.0005 && (mode !== "race" || !alive.length || h.m[i] < 0.9995))))].map(Number);
     // in the playoffs, only chart teams that are in the bracket (drops anyone removed from it)
