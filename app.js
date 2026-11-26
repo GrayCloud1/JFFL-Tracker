@@ -122,7 +122,7 @@ async function liveWeek(L, week) {
       if (f === 1 && ["Out", "IR", "Sus", "PUP"].includes(p.player && p.player.injury_status)) mu = 0;
       const pl = p.player || {}, name = pl.position === "DEF" ? `${nfl} D/ST` : pl.last_name ? `${(pl.first_name || "")[0] ? pl.first_name[0] + ". " : ""}${pl.last_name}` : `${nfl} ${pl.position || "player"}`;
       who[pid] = { name, last: pl.last_name || "", fi: (pl.first_name || "")[0] || "", nfl, pos: pl.position || "" };
-      if (f > 0 && mu > 0) items.push({ nfl, mu: mu * f, sd: 0.62 * mu * Math.sqrt(f), name, pos: pl.position || "", f });
+      if (f > 0 && mu > 0) items.push({ nfl, mu: mu * f, sd: 0.62 * mu * Math.sqrt(f), name, pos: pl.position || "", f, pid });
     });
     teams[m.roster_id] = { live: m.custom_points ?? m.points ?? 0, items, pp, who, st };
   }
@@ -353,7 +353,13 @@ function detailRow(i, res, mode, wk, span) {
   const later = Array.from({ length: rounds - 1 }, (_, r) => [r + 2 === rounds ? "Make final" : "Reach round " + (r + 2), o.reach[r + 2] || 0]);
   const steps = mode === "race" ? [["Make playoffs", o.make], ...(res.byes ? [["First-round bye", o.bye]] : []), ...later, ["Win title", o.champ]] : [...later, ["Win title", o.champ]];
   const seeds = mode === "race" && o.make > 0.0005 ? `<div class="dsec"><div class="dh">Seed chances</div><div class="seeds">${o.seeds.map((p, s) => `<div><span style="height:${Math.max(2, p * 46)}px"></span><b>${s + 1}</b><small>${p >= .005 ? Math.round(p * 100) + "%" : ""}</small></div>`).join("")}</div></div>` : "";
-  const players = t ? `<div class="dsec"><div class="dh">${t.items.some(x => x.fut) ? "This game" : "This week"} · ${f1(t.live)} pts${t.items.length ? `, proj. ${f1(projOf(t))}` : ", done"}</div>${t.items.length ? `<ul class="pl">${t.items.slice().sort((a, b) => b.mu - a.mu).map(x => `<li><span>${esc(x.name)} <small>${x.fut ? "not played yet" : `${esc(x.pos)} · ${esc(x.nfl)}`}${x.f < 1 ? " · " + Math.round(x.f * 100) + "% of game left" : ""}</small></span><b>+${f1(x.mu)}</b></li>`).join("")}</ul>` : `<p class="muted">Every starter has finished.</p>`}</div>` : "";
+  // every starter with their points so far; players still to play also show what they're projected to add
+  const rows = t ? Object.keys(t.pp).map(pid => {
+    const w = t.who[pid] || { name: "Starter", pos: "", nfl: "" }, it = t.items.find(x => x.pid === pid), pts = t.pp[pid] || 0;
+    const st = !it ? (pts ? "done" : "no game / out") : it.f >= 1 ? `yet to play · proj. ${f1(it.mu)}` : `playing · +${f1(it.mu)} proj.`;
+    return `<li><span>${esc(w.name)} <small>${w.pos && w.pos !== "DEF" ? esc(w.pos) + " · " + esc(w.nfl) + " · " : ""}${st}</small></span><b>${f1(pts)}</b></li>`;
+  }).join("") + t.items.filter(x => x.fut).map(x => `<li><span>${esc(x.name)} <small>not played yet</small></span><b>+${f1(x.mu)}</b></li>`).join("") : "";
+  const players = t ? `<div class="dsec"><div class="dh">${t.items.some(x => x.fut) ? "This game" : "This week"} · ${f1(t.live)} pts${t.items.length ? `, proj. ${f1(projOf(t))}` : ", done"}</div><ul class="pl">${rows}</ul></div>` : "";
   return `<tr class="detail" data-for="${i}"${openRows.has(i) ? "" : " hidden"}><td colspan="${span}"><div class="dwrap">
     <div class="dsec"><div class="dh">Path to the title</div><div class="path">${steps.map(([l, p]) => `<div><small>${l}</small><div class="track"><i style="width:${p * 100}%"></i></div><b>${fpw(p)}</b></div>`).join("")}</div></div>
     ${seeds}${players}</div></td></tr>`;
