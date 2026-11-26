@@ -28,6 +28,8 @@ let prevPP = null, prevWP = {}, IMP = {}, impKey = "", SC = {};
 // The stat snapshot is saved too, so a reload picks up every play since the last visit instead of starting over.
 function loadImp(key) { if (impKey === key) return; impKey = key; prevWP = {};
   try { IMP = JSON.parse(localStorage.getItem(key) || "{}"); } catch { IMP = {}; }
+  // one last play per team now ("3-7:3"); move any older one-per-matchup entry to its team
+  for (const k of Object.keys(IMP)) if (!k.includes(":")) { const m = IMP[k]; if (m && m.rid != null && !IMP[k + ":" + m.rid]) IMP[k + ":" + m.rid] = m; delete IMP[k]; }
   try { prevPP = JSON.parse(localStorage.getItem(key + ":base") || "null"); } catch { prevPP = null; } }
 function saveImp() { try { localStorage.setItem(impKey, JSON.stringify(IMP)); localStorage.setItem(impKey + ":base", JSON.stringify(prevPP)); } catch {} }
 
@@ -440,15 +442,21 @@ function needle(p, ca, cb) {
     <circle cx="${cx}" cy="${cy}" r="7" fill="var(--ink)"/></svg>`;
 }
 
-function impactBox(key) {
-  const m = IMP[key]; if (!m || !T[m.rid] || !("play" in m)) return ""; // only scoring plays (older saved entries are skipped)
-  const mins = Math.round((Date.now() - m.t) / 60000), ago = mins < 1 ? "just now" : mins < 60 ? mins + "m ago" : Math.round(mins / 60) + "h ago";
+document.head.insertAdjacentHTML("beforeend", "<style>.imp{flex-direction:column;gap:8px}.imp .dot{display:none}.imp .ir{display:flex;gap:9px;align-items:flex-start}.imp .ir .mono{flex:none;margin-top:2px}.imp .ir.new{animation:fu 1.8s ease-out}</style>");
+// one "Last play" line per team, so a big play for one side can't be buried by the other side's next play
+function impactBox(a, b) {
   const pts = d => `${d >= 0 ? "+" : "−"}${f1(Math.abs(d))} pts`;
-  const what = m.play ? esc(m.play[0].toUpperCase() + m.play.slice(1)) : m.desc ? esc(m.desc.length > 120 ? m.desc.slice(0, 117) + "…" : m.desc) : esc(m.name) + " " + pts(m.delta);
-  let sub = m.delta != null ? `${esc(m.name)} ${pts(m.delta)} for ${esc(code(m.rid))}` : `${esc(m.name)} for ${esc(code(m.rid))}`;
-  if (m.before != null) { const d = Math.round((m.after - m.before) * 100);
-    sub += ` · win odds <b>${Math.round(m.before * 100)}% → ${Math.round(m.after * 100)}%</b>${d ? ` <span class="${d > 0 ? "up" : "dn"}">${d > 0 ? "▲" : "▼"}${Math.abs(d)}</span>` : ""}`; }
-  return `<div class="imp${mins < 1 ? " new" : ""}"><span class="dot"></span><div><span class="mt">Last play · </span>${m.td ? '<span class="tdtag">TD</span>' : ""}<b>${what}</b> <span class="mt">· ${ago}</span>${sub ? `<br><span class="mt">${sub}</span>` : ""}</div></div>`;
+  const row = id => {
+    const m = IMP[a + "-" + b + ":" + id]; if (!m || !T[id] || !("play" in m)) return "";
+    const mins = Math.round((Date.now() - m.t) / 60000), ago = mins < 1 ? "just now" : mins < 60 ? mins + "m ago" : Math.round(mins / 60) + "h ago";
+    const what = m.play ? esc(m.play[0].toUpperCase() + m.play.slice(1)) : esc(m.name) + " " + pts(m.delta || 0);
+    let sub = m.delta != null ? `${esc(m.name)} ${pts(m.delta)} for ${esc(code(id))}` : `${esc(m.name)} for ${esc(code(id))}`;
+    if (m.before != null) { const d = Math.round((m.after - m.before) * 100);
+      sub += ` · win odds <b>${Math.round(m.before * 100)}% → ${Math.round(m.after * 100)}%</b>${d ? ` <span class="${d > 0 ? "up" : "dn"}">${d > 0 ? "▲" : "▼"}${Math.abs(d)}</span>` : ""}`; }
+    return `<div class="ir${mins < 1 ? " new" : ""}">${mono(id, "xs")}<div><span class="mt">Last play · </span>${m.td ? '<span class="tdtag">TD</span>' : ""}<b>${what}</b> <span class="mt">· ${ago}</span><br><span class="mt">${sub}</span></div></div>`;
+  };
+  const rows = row(a) + row(b);
+  return rows ? `<div class="imp">${rows}</div>` : "";
 }
 
 function renderGames(wk, res, title, labels) {
@@ -467,7 +475,7 @@ function renderGames(wk, res, title, labels) {
     return `<div class="card mu"><div class="top2"><span>${labels ? labels[k] : "Matchup " + (k + 1)}</span><span class="lv">Win probability</span></div>
       ${needle(p, color(a), color(b))}
       <div class="vs">${side(a, ta, pa, "a")}<div class="mid"><span ${anim("gp" + a + "-" + b, Math.max(p, 1 - p))}>${fp(Math.max(p, 1 - p))}</span><br><span style='font-weight:600;font-size:11px'>${esc(code(p >= .5 ? a : b))}</span></div>${side(b, tb, pb, "b")}</div>
-      <div class="line"><span>Spread <b>${esc(code(favA ? a : b))} −${sp}</b></span><span>O/U <b>${half(pa + pb)}</b></span><span>ML <b>${esc(code(a))} ${amer(p)}</b> / <b>${esc(code(b))} ${amer(1 - p)}</b></span></div>${impactBox(a + "-" + b)}</div>`;
+      <div class="line"><span>Spread <b>${esc(code(favA ? a : b))} −${sp}</b></span><span>O/U <b>${half(pa + pb)}</b></span><span>ML <b>${esc(code(a))} ${amer(p)}</b> / <b>${esc(code(b))} ${amer(1 - p)}</b></span></div>${impactBox(a, b)}</div>`;
   }).join("");
 }
 
@@ -596,9 +604,10 @@ function espnPlay(p, who, teamOf) {
   return "";
 }
 async function seedPlays(wk) {
-  const need = wk.pairs.filter(([a, b]) => !IMP[a + "-" + b] || !("play" in IMP[a + "-" + b]));
+  // every team (not matchup) that doesn't have a last play yet
+  const need = wk.pairs.flatMap(([a, b]) => [a, b].map(id => ({ key: a + "-" + b + ":" + id, id }))).filter(n => !IMP[n.key] || !("play" in IMP[n.key]));
   if (!need.length) return;
-  const teams = new Set(); need.forEach(pr => pr.forEach(id => Object.values(wk.teams[id].who).forEach(w => teams.add(w.nfl))));
+  const teams = new Set(); need.forEach(n => Object.values(wk.teams[n.id].who).forEach(w => teams.add(w.nfl)));
   const evs = (wk.events || []).filter(e => e.teams.some(t => teams.has(t)));
   const sums = await Promise.all(evs.map(e => get(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${e.id}`).catch(() => null)));
   const plays = [];
@@ -610,10 +619,9 @@ async function seedPlays(wk) {
     for (const d of dr) for (const p of d.plays || []) plays.push({ p, teamOf, gt, t: Date.parse(p.wallclock) || 0 });
   });
   plays.sort((x, y) => y.t - x.t || (+y.p.sequenceNumber || 0) - (+x.p.sequenceNumber || 0));
-  for (const [a, b] of need) {
-    const key = a + "-" + b;
+  for (const { key, id } of need) {
     outer: for (const { p, teamOf, gt, t } of plays) {
-      for (const id of [a, b]) for (const pid in wk.teams[id].who) {
+      for (const pid in wk.teams[id].who) {
         const w = wk.teams[id].who[pid]; if (!gt.has(w.nfl)) continue;
         const text = espnPlay(p, w, teamOf);
         if (text) { IMP[key] = { t: t || Date.now(), rid: id, name: w.name, delta: null, play: text, td: /touchdown/.test(text) }; break outer; }
@@ -629,7 +637,7 @@ function trackPlays(wk, wp) {
   for (const [a, b] of wk.pairs) {
     const key = a + "-" + b, pNow = wp[key] ?? 0.5, side = (id, p) => id === a ? p : 1 - p;
     if (!first) {
-      let best = null;
+      const best = {}; // most recent scoring play for each team
       for (const id of [a, b]) for (const pid in wk.teams[id].st) {
         const now = wk.teams[id].st[pid], was = prevPP[id]?.[pid];
         if (!was || !Object.keys(was.s).length) { (prevPP[id] ||= {})[pid] = now; continue; } // first sighting or game just started
@@ -637,14 +645,15 @@ function trackPlays(wk, wp) {
         if (Math.abs(pts) < 0.05) continue;
         const c = { id, pid, pts, text: playText(wk.teams[id].who[pid]?.pos, was.s, now.s), t: now.t };
         prevPP[id][pid] = now; // every scoring change counts once; the most recent one is shown
-        if (!best || c.t > best.t || (c.t === best.t && Math.abs(c.pts) > Math.abs(best.pts))) best = c;
+        if (!c.text) continue; // a stat correction with no actual play (e.g. +0.1) doesn't replace the last play
+        const o = best[id]; if (!o || c.t > o.t || (c.t === o.t && Math.abs(c.pts) > Math.abs(o.pts))) best[id] = c;
       }
-      if (best) {
-        const who = wk.teams[best.id].who[best.pid] || { name: "A starter" };
-        IMP[key] = { t: Math.min(Date.now(), best.t || Date.now()), rid: best.id, name: who.name, delta: best.pts, play: best.text,
-          td: /touchdown/.test(best.text), before: prevWP[key] != null ? side(best.id, prevWP[key]) : null, after: side(best.id, pNow) };
-        prevWP[key] = pNow;
+      for (const id in best) {
+        const c = best[id], who = wk.teams[c.id].who[c.pid] || { name: "A starter" };
+        IMP[key + ":" + c.id] = { t: Math.min(Date.now(), c.t || Date.now()), rid: c.id, name: who.name, delta: c.pts, play: c.text,
+          td: /touchdown/.test(c.text), before: prevWP[key] != null ? side(c.id, prevWP[key]) : null, after: side(c.id, pNow) };
       }
+      if (Object.keys(best).length) prevWP[key] = pNow;
     } else {
       for (const id of [a, b]) prevPP[id] = { ...wk.teams[id].st };
       prevWP[key] = pNow;
