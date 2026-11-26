@@ -438,7 +438,7 @@ function impactBox(key) {
     if (m.before != null) { const d = Math.round((m.after - m.before) * 100);
       sub += ` <span class="mt">· win odds</span> <b>${Math.round(m.before * 100)}% → ${Math.round(m.after * 100)}%</b>${d ? ` <span class="${d > 0 ? "up" : "dn"}">${d > 0 ? "▲" : "▼"}${Math.abs(d)}</span>` : ""}`; }
   }
-  return `<div class="imp${mins < 1 ? " new" : ""}"><span class="dot"></span><div>${m.td ? '<span class="tdtag">TOUCHDOWN</span>' : '<span class="mt">Last big play · </span>'}${head} <span class="mt">· ${m.when ? esc(m.when) + ", " : ""}${ago}</span>${sub}</div></div>`;
+  return `<div class="imp${mins < 1 ? " new" : ""}"><span class="dot"></span><div>${m.td ? '<span class="tdtag">TOUCHDOWN</span>' : `<span class="mt">${m.delta != null && Math.abs(m.delta) < 3 ? "Latest play" : "Last big play"} · </span>`}${head} <span class="mt">· ${m.when ? esc(m.when) + ", " : ""}${ago}</span>${sub}</div></div>`;
 }
 
 function renderGames(wk, res, title, labels) {
@@ -519,34 +519,40 @@ function renderTrend(ids, heading) {
   $("legend").innerHTML = "";
 }
 
-// Compare each starter's points with the last refresh. The biggest change in a matchup becomes its
-// "last big play", described with ESPN's last-play text when that text names the player.
+// Track each starter's points against a running baseline. Small gains (a 4-yard run is 0.4 pts) add up
+// until they reach half a point, then the biggest change in the matchup becomes its latest play,
+// described with ESPN's last-play text when that text names the player.
 function trackPlays(wk, wp) {
   if (!wk) return;
   const nowPP = {}; for (const id in wk.teams) nowPP[id] = wk.teams[id].pp || {};
   const describe = (w, pid) => { const who = w.who[pid], pl = who && wk.plays?.[who.nfl];
     return pl && who.last.length > 2 && new RegExp("\\b" + who.last.replace(/[^A-Za-z'-]/g, "") + "\\b", "i").test(pl.text) ? pl : null; };
+  const first = !prevPP; if (first) prevPP = {};
   for (const [a, b] of wk.pairs) {
     const key = a + "-" + b, pNow = wp[key] ?? 0.5;
-    if (prevPP) {
+    if (!first) {
       let best = null;
       for (const id of [a, b]) for (const pid in nowPP[id]) {
-        const d = nowPP[id][pid] - (prevPP[id]?.[pid] ?? nowPP[id][pid]);
-        if (Math.abs(d) >= 1 && (!best || Math.abs(d) > Math.abs(best.d))) best = { id, pid, d };
+        const base = prevPP[id]?.[pid];
+        if (base == null) { (prevPP[id] ||= {})[pid] = nowPP[id][pid]; continue; }
+        const d = nowPP[id][pid] - base;
+        if (Math.abs(d) >= 0.5 && (!best || Math.abs(d) > Math.abs(best.d))) best = { id, pid, d };
       }
       if (best) {
         const w = wk.teams[best.id], who = w.who[best.pid] || { name: "A starter" }, pl = describe(w, best.pid), side = p => best.id === a ? p : 1 - p;
         IMP[key] = { t: Date.now(), rid: best.id, name: who.name, delta: best.d, desc: pl?.text || "", when: pl?.when || "",
           td: best.d >= 5.5 || /touchdown/i.test(pl?.text || ""), before: prevWP[key] != null ? side(prevWP[key]) : null, after: side(pNow) };
+        prevPP[best.id][best.pid] = nowPP[best.id][best.pid]; prevWP[key] = pNow;
       }
-    } else if (!IMP[key]) {
+    } else {
+      for (const id of [a, b]) prevPP[id] = { ...nowPP[id] };
+      prevWP[key] = pNow;
       // first load: show the latest live play that involves one of these starters, if any
-      for (const id of [a, b]) for (const pid in nowPP[id]) { const pl = describe(wk.teams[id], pid);
+      if (!IMP[key]) for (const id of [a, b]) for (const pid in nowPP[id]) { const pl = describe(wk.teams[id], pid);
         if (pl && !IMP[key]) IMP[key] = { t: Date.now(), rid: id, name: wk.teams[id].who[pid].name, desc: pl.text, when: pl.when, td: /touchdown/i.test(pl.text) }; }
     }
-    prevWP[key] = pNow;
   }
-  prevPP = nowPP; saveImp();
+  saveImp();
 }
 
 // ---------- hall of champions ----------
