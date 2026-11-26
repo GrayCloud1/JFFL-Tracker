@@ -449,8 +449,8 @@ function impactBox(a, b) {
   const row = id => {
     const m = IMP[a + "-" + b + ":" + id]; if (!m || !T[id] || !("play" in m)) return "";
     const mins = Math.round((Date.now() - m.t) / 60000), ago = mins < 1 ? "just now" : mins < 60 ? mins + "m ago" : Math.round(mins / 60) + "h ago";
-    const what = m.play ? esc(m.play[0].toUpperCase() + m.play.slice(1)) : esc(m.name) + " " + pts(m.delta || 0);
-    let sub = m.delta != null ? `${esc(m.name)} ${pts(m.delta)} for ${esc(code(id))}` : `${esc(m.name)} for ${esc(code(id))}`;
+    const what = m.play ? `${esc(m.name)}: ${esc(m.play)}` : esc(m.name) + " " + pts(m.delta || 0); // player name always leads
+    let sub = m.delta != null ? `${pts(m.delta)} for ${esc(code(id))}` : `For ${esc(code(id))}`;
     if (m.before != null) { const d = Math.round((m.after - m.before) * 100);
       sub += ` · win odds <b>${Math.round(m.before * 100)}% → ${Math.round(m.after * 100)}%</b>${d ? ` <span class="${d > 0 ? "up" : "dn"}">${d > 0 ? "▲" : "▼"}${Math.abs(d)}</span>` : ""}`; }
     return `<div class="ir${mins < 1 ? " new" : ""}">${mono(id, "xs")}<div><span class="mt">Last play · </span>${m.td ? '<span class="tdtag">TD</span>' : ""}<b>${what}</b> <span class="mt">· ${ago}</span><br><span class="mt">${sub}</span></div></div>`;
