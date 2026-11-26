@@ -25,13 +25,13 @@ let prevFinals = null, T = {}, nextAt = 0, lastFetch = 0, lastChange = 0, lastSi
 const PV = {}, openRows = new Set();
 // last big play per matchup: built by comparing each starter's points between refreshes
 let prevPP = null, prevWP = {}, IMP = {}, impKey = "", SC = {};
-// The stat snapshot is saved too, so a reload picks up every play since the last visit instead of starting over.
+// On each page load the latest play per team comes from ESPN's play-by-play; while the page stays open, live stats take over.
 function loadImp(key) { if (impKey === key) return; impKey = key; prevWP = {};
   try { IMP = JSON.parse(localStorage.getItem(key) || "{}"); } catch { IMP = {}; }
   // one last play per team now ("3-7:3"); move any older one-per-matchup entry to its team
   for (const k of Object.keys(IMP)) if (!k.includes(":")) { const m = IMP[k]; if (m && m.rid != null && !IMP[k + ":" + m.rid]) IMP[k + ":" + m.rid] = m; delete IMP[k]; }
-  try { prevPP = JSON.parse(localStorage.getItem(key + ":base") || "null"); } catch { prevPP = null; } }
-function saveImp() { try { localStorage.setItem(impKey, JSON.stringify(IMP)); localStorage.setItem(impKey + ":base", JSON.stringify(prevPP)); } catch {} }
+  prevPP = null; try { localStorage.removeItem(key + ":base"); } catch {} }
+function saveImp() { try { localStorage.setItem(impKey, JSON.stringify(IMP)); } catch {} }
 
 function gauss() { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
 const color = id => PAL[(id - 1) % PAL.length];
@@ -604,8 +604,8 @@ function espnPlay(p, who, teamOf) {
   return "";
 }
 async function seedPlays(wk) {
-  // every team (not matchup) that doesn't have a last play yet
-  const need = wk.pairs.flatMap(([a, b]) => [a, b].map(id => ({ key: a + "-" + b + ":" + id, id }))).filter(n => !IMP[n.key] || !("play" in IMP[n.key]));
+  // every team: a saved play can be stale (page was closed while games went on), so ESPN's latest play wins if it's newer
+  const need = wk.pairs.flatMap(([a, b]) => [a, b].map(id => ({ key: a + "-" + b + ":" + id, id })));
   if (!need.length) return;
   const teams = new Set(); need.forEach(n => Object.values(wk.teams[n.id].who).forEach(w => teams.add(w.nfl)));
   const evs = (wk.events || []).filter(e => e.teams.some(t => teams.has(t)));
@@ -624,7 +624,7 @@ async function seedPlays(wk) {
       for (const pid in wk.teams[id].who) {
         const w = wk.teams[id].who[pid]; if (!gt.has(w.nfl)) continue;
         const text = espnPlay(p, w, teamOf);
-        if (text) { IMP[key] = { t: t || Date.now(), rid: id, name: w.name, delta: null, play: text, td: /touchdown/.test(text) }; break outer; }
+        if (text) { const old = IMP[key]; if (!old || !("play" in old) || (t && t > old.t)) IMP[key] = { t: t || Date.now(), rid: id, name: w.name, delta: null, play: text, td: /touchdown/.test(text) }; break outer; }
       }
     }
   }
@@ -640,7 +640,7 @@ function trackPlays(wk, wp) {
       const best = {}; // most recent scoring play for each team
       for (const id of [a, b]) for (const pid in wk.teams[id].st) {
         const now = wk.teams[id].st[pid], was = prevPP[id]?.[pid];
-        if (!was || !Object.keys(was.s).length) { (prevPP[id] ||= {})[pid] = now; continue; } // first sighting or game just started
+        if (!was) { (prevPP[id] ||= {})[pid] = now; continue; } // first sighting (a player's first play of the game still counts below)
         const pts = statPts(was.s, now.s);
         if (Math.abs(pts) < 0.05) continue;
         const c = { id, pid, pts, text: playText(wk.teams[id].who[pid]?.pos, was.s, now.s), t: now.t };
