@@ -20,7 +20,8 @@ const amer = p => { if (p >= 0.9995) return "LOCK"; if (p <= 0.0005) return "—
 const half = x => (Math.round(x * 2) / 2).toFixed(1);
 
 let roundWeeks = () => 1; // weeks per playoff round (JFFL: 2)
-const left = t => t.items.filter(i => !i.fut).length; // starters still to play (excludes a not-yet-played week)
+// starters whose NFL game isn't over yet (playing now or still to play), like Sleeper counts them
+const left = t => t.rem ?? t.items.filter(i => !i.fut).length;
 let prevFinals = null, T = {}, nextAt = 0, lastFetch = 0, lastChange = 0, lastSig = "", timer = null, anyLive = false, histKey = "", hist = [];
 const PV = {}, openRows = new Set();
 // last big play per matchup: built by comparing each starter's points between refreshes
@@ -108,19 +109,20 @@ async function liveWeek(L, week) {
   const P = {}; for (const p of proj) P[p.player_id] = p;
   const teams = {};
   for (const m of mus) {
-    const items = [], pp = {}, who = {};
+    const items = [], pp = {}, who = {}; let rem = 0;
     (m.starters || []).forEach(pid => {
       if (!pid || pid === "0") return;
       pp[pid] = (m.players_points || {})[pid] || 0;
       const p = P[pid]; if (!p) return;
       const nfl = p.team, f = clock.frac[nfl] ?? 0;
+      if (f > 0) rem++; // counted even if projected for 0 (e.g. ruled out), since Sleeper still lists them as yet to play
       let mu = (p.stats && p.stats[key]) || 0;
       if (f === 1 && ["Out", "IR", "Sus", "PUP"].includes(p.player && p.player.injury_status)) mu = 0;
       const pl = p.player || {}, name = pl.position === "DEF" ? `${nfl} D/ST` : pl.last_name ? `${(pl.first_name || "")[0] ? pl.first_name[0] + ". " : ""}${pl.last_name}` : `${nfl} ${pl.position || "player"}`;
       who[pid] = { name, last: pl.last_name || "", fi: (pl.first_name || "")[0] || "", nfl, pos: pl.position || "" };
       if (f > 0 && mu > 0) items.push({ nfl, mu: mu * f, sd: 0.62 * mu * Math.sqrt(f), name, pos: pl.position || "", f, pid });
     });
-    teams[m.roster_id] = { live: m.custom_points ?? m.points ?? 0, items, pp, who };
+    teams[m.roster_id] = { live: m.custom_points ?? m.points ?? 0, items, pp, who, rem };
   }
   return { week, teams, pairs: pairsOf(mus), live: clock.live, plays: clock.plays, next: clock.next, events: clock.events };
 }
