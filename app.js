@@ -73,12 +73,13 @@ function pushHist(e) { hist.push(e); if (hist.length > 500) hist = hist.slice(-5
 
 // ---------- data ----------
 async function gameClock(season, week) {
-  const frac = {}, live = [], plays = {}; let next = null;
+  const frac = {}, live = [], plays = {}, events = []; let next = null;
   try {
     const e = await get(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${week}&dates=${season}`);
     for (const ev of e.events || []) {
       const st = ev.status, s = st.type.state; let f = 1;
       if (s === "pre" && ev.date && (!next || ev.date < next)) next = ev.date;
+      if (s !== "pre") events.push({ id: ev.id, teams: ev.competitions[0].competitors.map(c => ESPN2SLP[c.team.abbreviation] || c.team.abbreviation) });
       if (s === "post") f = 0;
       else if (s === "in") {
         const [m, sec] = String(st.displayClock || "0:00").split(":").map(Number);
@@ -95,7 +96,7 @@ async function gameClock(season, week) {
       frac[g.home] = frac[g.away] = f; if (f === 0.5) live.push(`${g.away} @ ${g.home}`);
     }
   }
-  return { frac, live, plays, next };
+  return { frac, live, plays, next, events };
 }
 
 async function liveWeek(L, week) {
@@ -120,12 +121,12 @@ async function liveWeek(L, week) {
       let mu = (p.stats && p.stats[key]) || 0;
       if (f === 1 && ["Out", "IR", "Sus", "PUP"].includes(p.player && p.player.injury_status)) mu = 0;
       const pl = p.player || {}, name = pl.position === "DEF" ? `${nfl} D/ST` : pl.last_name ? `${(pl.first_name || "")[0] ? pl.first_name[0] + ". " : ""}${pl.last_name}` : `${nfl} ${pl.position || "player"}`;
-      who[pid] = { name, last: pl.last_name || "", nfl, pos: pl.position || "" };
+      who[pid] = { name, last: pl.last_name || "", fi: (pl.first_name || "")[0] || "", nfl, pos: pl.position || "" };
       if (f > 0 && mu > 0) items.push({ nfl, mu: mu * f, sd: 0.62 * mu * Math.sqrt(f), name, pos: pl.position || "", f });
     });
     teams[m.roster_id] = { live: m.custom_points ?? m.points ?? 0, items, pp, who, st };
   }
-  return { week, teams, pairs: pairsOf(mus), live: clock.live, plays: clock.plays, next: clock.next };
+  return { week, teams, pairs: pairsOf(mus), live: clock.live, plays: clock.plays, next: clock.next, events: clock.events };
 }
 
 function pairsOf(mus) {
@@ -438,7 +439,7 @@ function impactBox(key) {
   const mins = Math.round((Date.now() - m.t) / 60000), ago = mins < 1 ? "just now" : mins < 60 ? mins + "m ago" : Math.round(mins / 60) + "h ago";
   const pts = d => `${d >= 0 ? "+" : "−"}${f1(Math.abs(d))} pts`;
   const what = m.play ? esc(m.play[0].toUpperCase() + m.play.slice(1)) : m.desc ? esc(m.desc.length > 120 ? m.desc.slice(0, 117) + "…" : m.desc) : esc(m.name) + " " + pts(m.delta);
-  let sub = m.delta != null ? `${esc(m.name)} ${pts(m.delta)} for ${esc(code(m.rid))}` : m.desc ? `${esc(m.name)} · ${esc(code(m.rid))}` : "";
+  let sub = m.delta != null ? `${esc(m.name)} ${pts(m.delta)} for ${esc(code(m.rid))}` : `${esc(m.name)} for ${esc(code(m.rid))}`;
   if (m.before != null) { const d = Math.round((m.after - m.before) * 100);
     sub += ` · win odds <b>${Math.round(m.before * 100)}% → ${Math.round(m.after * 100)}%</b>${d ? ` <span class="${d > 0 ? "up" : "dn"}">${d > 0 ? "▲" : "▼"}${Math.abs(d)}</span>` : ""}`; }
   return `<div class="imp${mins < 1 ? " new" : ""}"><span class="dot"></span><div><span class="mt">Last play · </span>${m.td ? '<span class="tdtag">TD</span>' : ""}<b>${what}</b> <span class="mt">· ${ago}</span>${sub ? `<br><span class="mt">${sub}</span>` : ""}</div></div>`;
@@ -550,6 +551,70 @@ function playText(pos, a, b) {
   if (d("pass_2pt") + d("rush_2pt") + d("rec_2pt") > 0) t.push("2-point conversion");
   if (d("fum_lost") > 0) t.push("fumble lost");
   return t.join(", ");
+}
+// First load: any matchup without a saved last play gets one from ESPN's play-by-play, so every card
+// has its most recent scoring play even for a first-time visitor. After that, live stats take over.
+let seeded = false;
+const escRe = x => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function espnPlay(p, who, teamOf) {
+  const txt = p.text || "", type = p.type?.text || "", y = Math.round(p.statYardage || 0);
+  if (/no play/i.test(txt) || /penalty|timeout|end of|kickoff|punt/i.test(type)) return "";
+  const td = /touchdown/i.test(type) || /TOUCHDOWN/.test(txt);
+  if (who.pos === "DEF") {
+    const off = teamOf(p.start?.team?.id);
+    if (!off || off === who.nfl) return "";
+    if (td && /interception|fumble|return/i.test(type)) return "defensive touchdown";
+    if (p.scoringPlay && p.scoreValue) return `gave up ${p.scoreValue} points`;
+    if (/sack/i.test(type)) return "sack";
+    if (/interception/i.test(type)) return "interception";
+    if (p.isTurnover && /fumble/i.test(type + txt)) return "fumble recovery";
+    return "";
+  }
+  if (!who.last || !who.fi) return "";
+  const re = new RegExp("\\b" + escRe(who.fi) + "\\.\\s?" + escRe(who.last) + "\\b", "i");
+  if (!re.test(txt)) return "";
+  if (who.pos === "K") {
+    if (/field goal/i.test(type) && /good/i.test(type + txt)) return `${y}-yard field goal`;
+    if (new RegExp(escRe(who.last) + "[^.]*extra point is GOOD", "i").test(txt)) return "extra point";
+    return "";
+  }
+  const yd = w => y > 0 ? `${y}-yard ${w}` : y < 0 ? `${w} for a ${-y}-yard loss` : "";
+  const passer = new RegExp(escRe(who.fi) + "\\.\\s?" + escRe(who.last) + "\\s+pass", "i").test(txt);
+  if (/pass/i.test(type) && /incomplet|intercept/i.test(type)) return passer && /intercept/i.test(type) ? "interception thrown" : "";
+  if (/reception|passing touchdown|pass/i.test(type) || / pass /.test(txt)) {
+    if (passer) return td ? `${y}-yard touchdown pass` : yd("completion");
+    return td ? `${y}-yard touchdown catch` : yd("reception");
+  }
+  if (/rush/i.test(type) || /\b(left|right|up the middle)\b/.test(txt)) return td ? `${y}-yard touchdown run` : yd("run");
+  if (/fumble/i.test(type + txt) && p.isTurnover) return "fumble lost";
+  return "";
+}
+async function seedPlays(wk) {
+  const need = wk.pairs.filter(([a, b]) => !IMP[a + "-" + b] || !("play" in IMP[a + "-" + b]));
+  if (!need.length) return;
+  const teams = new Set(); need.forEach(pr => pr.forEach(id => Object.values(wk.teams[id].who).forEach(w => teams.add(w.nfl))));
+  const evs = (wk.events || []).filter(e => e.teams.some(t => teams.has(t)));
+  const sums = await Promise.all(evs.map(e => get(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${e.id}`).catch(() => null)));
+  const plays = [];
+  sums.forEach(sm => {
+    if (!sm) return;
+    const ids = {}; for (const c of sm.header?.competitions?.[0]?.competitors || []) ids[c.team?.id ?? c.id] = ESPN2SLP[c.team?.abbreviation] || c.team?.abbreviation;
+    const teamOf = id => ids[id], gt = new Set(Object.values(ids));
+    const dr = [...(sm.drives?.previous || []), ...(sm.drives?.current ? [sm.drives.current] : [])];
+    for (const d of dr) for (const p of d.plays || []) plays.push({ p, teamOf, gt, t: Date.parse(p.wallclock) || 0 });
+  });
+  plays.sort((x, y) => y.t - x.t || (+y.p.sequenceNumber || 0) - (+x.p.sequenceNumber || 0));
+  for (const [a, b] of need) {
+    const key = a + "-" + b;
+    outer: for (const { p, teamOf, gt, t } of plays) {
+      for (const id of [a, b]) for (const pid in wk.teams[id].who) {
+        const w = wk.teams[id].who[pid]; if (!gt.has(w.nfl)) continue;
+        const text = espnPlay(p, w, teamOf);
+        if (text) { IMP[key] = { t: t || Date.now(), rid: id, name: w.name, delta: null, play: text, td: /touchdown/.test(text) }; break outer; }
+      }
+    }
+  }
+  saveImp();
 }
 const statPts = (a, b) => { let p = 0; for (const k in SC) { const v = (b[k] || 0) - (a[k] || 0); if (v) p += v * SC[k]; } return Math.round(p * 100) / 100; };
 function trackPlays(wk, wp) {
@@ -696,6 +761,7 @@ async function refresh() {
     const finalsNow = new Set((wkShown?.pairs || []).filter(([a, b]) => !wkShown.teams[a].items.length && !wkShown.teams[b].items.length).map(p => p.join("-")));
     const newFinals = prevFinals ? [...finalsNow].filter(k => !prevFinals.has(k)).length : 0; prevFinals = finalsNow;
 
+    if (!seeded && wkShown) { seeded = true; await seedPlays(wkShown).catch(() => {}); }
     trackPlays(wkShown, res.wp);
     const { base } = standings(L, R);
     const W = {}, PF = {}; ids.forEach(i => { W[i] = base[i].w; PF[i] = base[i].pf; });
