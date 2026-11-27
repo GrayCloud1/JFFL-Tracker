@@ -20,7 +20,7 @@ const amer = p => { if (p >= 0.9995) return "LOCK"; if (p <= 0.0005) return "—
 const half = x => (Math.round(x * 2) / 2).toFixed(1);
 
 let roundWeeks = () => 1; // weeks per playoff round (JFFL: 2)
-// starters whose NFL game isn't over yet (playing now or still to play), like Sleeper counts them
+// starters whose NFL game hasn't started yet ("yet to play", the way Sleeper counts it)
 const left = t => t.rem ?? t.items.filter(i => !i.fut).length;
 let prevFinals = null, T = {}, nextAt = 0, lastFetch = 0, lastChange = 0, lastSig = "", timer = null, anyLive = false, histKey = "", hist = [];
 const PV = {}, openRows = new Set();
@@ -115,7 +115,7 @@ async function liveWeek(L, week) {
       pp[pid] = (m.players_points || {})[pid] || 0;
       const p = P[pid]; if (!p) return;
       const nfl = p.team, f = clock.frac[nfl] ?? 0;
-      if (f > 0) rem++; // counted even if projected for 0 (e.g. ruled out), since Sleeper still lists them as yet to play
+      if (f === 1) rem++; // game not started; counted even if projected for 0 (e.g. ruled out), like Sleeper
       let mu = (p.stats && p.stats[key]) || 0;
       if (f === 1 && ["Out", "IR", "Sus", "PUP"].includes(p.player && p.player.injury_status)) mu = 0;
       const pl = p.player || {}, name = pl.position === "DEF" ? `${nfl} D/ST` : pl.last_name ? `${(pl.first_name || "")[0] ? pl.first_name[0] + ". " : ""}${pl.last_name}` : `${nfl} ${pl.position || "player"}`;
@@ -283,7 +283,7 @@ function needsFor(i, res, mode, wk) {
     const lead = me.live - them.live;
     if (!me.items.length && them.items.length) lines.push(`Done at <b>${f1(me.live)}</b>. Needs <b>${nm(opp)}</b> to finish under that (now ${f1(them.live)}, ${oppLeft} still to play, proj. ${f1(projOf(them))}).`);
     else if (me.items.length && !them.items.length) lines.push(`Needs <b>${f1(Math.max(0, them.live - me.live + 0.01))}+</b> more to beat <b>${nm(opp)}</b> (${f1(them.live)}, done). Projected to add ${f1(projOf(me) - me.live)}.`);
-    else lines.push(`${lead >= 0 ? "Leads" : "Trails"} <b>${nm(opp)}</b> ${f1(me.live)}–${f1(them.live)}, ${myLeft} vs ${oppLeft} players left (proj. ${f1(projOf(me))}–${f1(projOf(them))}${me.items.some(x => x.fut) ? " over both weeks" : ""}).`);
+    else lines.push(`${lead >= 0 ? "Leads" : "Trails"} <b>${nm(opp)}</b> ${f1(me.live)}–${f1(them.live)}, ${myLeft} vs ${oppLeft} yet to play (proj. ${f1(projOf(me))}–${f1(projOf(them))}${me.items.some(x => x.fut) ? " over both weeks" : ""}).`);
   } else if (pair && gameDone && me && them) lines.push(`${me.live >= them.live ? "Beat" : "Lost to"} <b>${nm(opp)}</b> ${f1(me.live)}–${f1(them.live)}.`);
   if (pw != null && pl != null && Math.abs(pw - pl) >= 0.02) chips.push([mode === "race" ? "If they win" : "Title odds with a win", pw], [mode === "race" ? "If they lose" : "With a loss", pl]);
   if (pt != null && pb != null && Math.abs(pt - pb) >= 0.08) chips.push([`Top-half score`, pt], [`Bottom half`, pb]);
@@ -304,7 +304,8 @@ function needsFor(i, res, mode, wk) {
         : `Wildcard race vs <b>${nm(t)}</b>: up ${f1(-gap)} PF (proj. +${f1(myRest)} vs +${f1(tRest)} still to come).`);
     }
   }
-  if (me && left(me)) lines.push(`Still playing: ${me.items.filter(x => !x.fut).sort((a, b) => b.mu - a.mu).slice(0, 3).map(x => `${esc(x.name)} (${f1(x.mu)})`).join(", ")}${left(me) > 3 ? ` +${left(me) - 3} more` : ""}.`);
+  const still = me ? me.items.filter(x => !x.fut) : [];
+  if (still.length) lines.push(`Still playing: ${still.slice().sort((a, b) => b.mu - a.mu).slice(0, 3).map(x => `${esc(x.name)} (${f1(x.mu)})`).join(", ")}${still.length > 3 ? ` +${still.length - 3} more` : ""}.`);
   return { p, head, lines, chips, label };
 }
 
@@ -467,7 +468,7 @@ function renderGames(wk, res, title, labels) {
       ${[[a, ta, tb], [b, tb, ta]].map(([id, t, u]) => `<div class="fr${t.live >= u.live ? " w" : ""}">${mono(id, "sm")}<span class="n">${nm(id)}</span><b>${f1(t.live)}</b></div>`).join("")}</div>`;
     const p = res.wp[a + "-" + b] ?? .5;
     const pa = projOf(ta), pb = projOf(tb), favA = pa >= pb, sp = half(Math.abs(pa - pb));
-    const side = (id, t, pj, cls) => `<div class="side ${cls}"><span class="n">${nm(id)}</span><span class="sc" ${anim("gs" + id, t.live, "pts")}>${f1(t.live)}</span><span class="pj">${t.items.length ? `proj ${f1(pj)}${left(t) ? ` · ${left(t)} left` : ""}` : "done"}</span></div>`;
+    const side = (id, t, pj, cls) => `<div class="side ${cls}"><span class="n">${nm(id)}</span><span class="sc" ${anim("gs" + id, t.live, "pts")}>${f1(t.live)}</span><span class="pj">${t.items.length ? `proj ${f1(pj)}${left(t) ? ` · ${left(t)} yet to play` : ""}` : "done"}</span></div>`;
     return `<div class="card mu"><div class="top2"><span>${labels ? labels[k] : "Matchup " + (k + 1)}</span><span class="lv">Win probability</span></div>
       ${needle(p, color(a), color(b))}
       <div class="vs">${side(a, ta, pa, "a")}<div class="mid"><span ${anim("gp" + a + "-" + b, Math.max(p, 1 - p))}>${fp(Math.max(p, 1 - p))}</span><br><span style='font-weight:600;font-size:11px'>${esc(code(p >= .5 ? a : b))}</span></div>${side(b, tb, pb, "b")}</div>
