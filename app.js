@@ -27,7 +27,7 @@ const PV = {}, openRows = new Set();
 // last big play per matchup: built by comparing each starter's points between refreshes
 let IMP = {}, impKey = "", SC = {};
 // "Last play" per team comes straight from the NFL play-by-play on every refresh (same for everyone, nothing saved).
-function loadImp(key) { if (impKey === key) return; impKey = key; IMP = {};
+function loadImp(key) { loadLog(key.replace("jfflimp", "jfflog")); if (impKey === key) return; impKey = key; IMP = {};
   try { localStorage.removeItem(key); localStorage.removeItem(key + ":base"); } catch {} } // clear what older versions saved
 
 function gauss() { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
@@ -656,6 +656,92 @@ function renderChamps(L) {
   const row = $("hofRow"), r = $("hofReign"); if (row.scrollWidth > row.clientWidth) row.scrollLeft = r.offsetLeft - (row.clientWidth - r.offsetWidth) / 2;
 }
 
+// ---------- recent changes (what made the chime) ----------
+// Each refresh compares scores, odds and finals with the previous one. Anything that changed pops up
+// briefly at the bottom and goes into the "Recent" log behind the bell (kept per device, per week).
+let LOG = [], logKey = "", prevLive = null, toastTimer = null;
+document.head.insertAdjacentHTML("beforeend", `<style>
+.logw{position:relative;flex:none}
+.logb{position:relative}
+.logb .dot{position:absolute;top:6px;right:6px;width:9px;height:9px;border-radius:50%;background:var(--live);box-shadow:0 0 0 2px var(--panel)}
+.logp{width:min(360px,92vw)}
+.logp .lh{display:flex;justify-content:space-between;align-items:baseline;font-weight:700;font-size:14px;margin-bottom:6px}
+.logp .lh small{font-weight:400;color:var(--mute);font-size:12px}
+.logp ul{list-style:none;margin:0;padding:0;max-height:min(60vh,420px);overflow-y:auto}
+.logp li{display:grid;grid-template-columns:62px 1fr;gap:8px;padding:8px 0;border-top:1px solid var(--line);font-size:13px;line-height:1.4;color:var(--ink2)}
+.logp li time{color:var(--mute);font-size:12px;white-space:nowrap}
+.logp li b{color:var(--ink)}
+.logp li.new{background:linear-gradient(90deg,rgba(var(--heat),.10),transparent)}
+.logp .empty{color:var(--mute);font-size:13px;padding:6px 0}
+.logp .up{color:var(--fav);font-weight:700}.logp .dn{color:var(--dog);font-weight:700}
+.toast{position:fixed;left:50%;bottom:18px;transform:translate(-50%,140%);width:min(460px,calc(100vw - 24px));background:var(--panel);color:var(--ink2);border:1px solid var(--line);border-left:4px solid var(--live);border-radius:10px;box-shadow:0 12px 32px #0000003a;padding:10px 14px;font-size:13.5px;line-height:1.45;z-index:40;cursor:pointer;transition:transform .35s cubic-bezier(.2,.9,.3,1.2)}
+.toast.show{transform:translate(-50%,0)}
+.toast b{color:var(--ink)}.toast .up{color:var(--fav);font-weight:700}.toast .dn{color:var(--dog);font-weight:700}
+.toast div+div{margin-top:4px;padding-top:4px;border-top:1px solid var(--line)}
+@media(prefers-reduced-motion:reduce){.toast{transition:none}}
+</style>`);
+{
+  const th = $("thBtn");
+  th.insertAdjacentHTML("beforebegin", `<div class="logw"><button class="thb logb" id="logBtn" aria-haspopup="true" aria-label="Recent changes" title="Recent changes"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 3a6 6 0 0 0-6 6v3.5L4.5 16h15L18 12.5V9a6 6 0 0 0-6-6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9.5 19a2.5 2.5 0 0 0 5 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span class="dot" hidden></span></button>
+    <div class="sndp logp" id="logPanel" hidden role="dialog" aria-label="Recent changes"><div class="lh">Recent changes <small id="logSub"></small></div><ul id="logList"></ul></div></div>`);
+  document.body.insertAdjacentHTML("beforeend", `<div class="toast" id="toast" role="status" aria-live="polite"></div>`);
+  const btn = $("logBtn"), panel = $("logPanel");
+  btn.addEventListener("click", e => { e.stopPropagation(); const open = panel.hidden; $("sndPanel") && ($("sndPanel").hidden = true); panel.hidden = !open; if (open) { renderLog(); markSeen(); } });
+  panel.addEventListener("click", e => e.stopPropagation());
+  document.addEventListener("click", () => { panel.hidden = true; });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") panel.hidden = true; });
+  $("toast").addEventListener("click", e => { e.stopPropagation(); $("toast").classList.remove("show"); panel.hidden = false; renderLog(); markSeen(); });
+}
+const seenKey = () => logKey + ":seen";
+function loadLog(key) { if (logKey === key) return; logKey = key; prevLive = null;
+  try { LOG = JSON.parse(localStorage.getItem(key) || "[]"); } catch { LOG = []; } renderLog(); }
+function markSeen() { try { localStorage.setItem(seenKey(), String(Date.now())); } catch {} $("logBtn").querySelector(".dot").hidden = true; }
+function renderLog() {
+  let seen = 0; try { seen = +localStorage.getItem(seenKey()) || 0; } catch {}
+  $("logBtn").querySelector(".dot").hidden = !LOG.some(e => e.t > seen);
+  $("logSub").textContent = LOG.length ? `${LOG.length} update${LOG.length === 1 ? "" : "s"} this week` : "";
+  $("logList").innerHTML = LOG.length ? LOG.slice().reverse().map(e => `<li class="${e.t > seen ? "new" : ""}"><time>${tFmt(e.t)}</time><span>${e.html}</span></li>`).join("")
+    : `<li class="empty" style="display:block">Nothing yet. Score changes, big odds swings and finals show up here as they happen.</li>`;
+}
+const oddsTxt = (a, b, what) => { const d = Math.round(b * 100) - Math.round(a * 100); return `${what} ${fpw(a)} → ${fpw(b)}${d ? ` <span class="${d > 0 ? "up" : "dn"}">${d > 0 ? "▲" : "▼"}${Math.abs(d)}</span>` : ""}`; };
+// changes since the previous refresh, for the teams in this week's games
+function diffChanges(wk, prevM, newM, newFinalKeys, what) {
+  const evs = [], inPlay = new Set((wk?.pairs || []).flat()), first = !prevLive;
+  if (!first && wk) for (const id of inPlay) {
+    const now = wk.teams[id]?.live, was = prevLive[id];
+    if (now != null && was != null && Math.abs(now - was) >= 0.05) evs.push({ k: "score", id, d: now - was });
+  }
+  if (!first && prevM) for (const id of inPlay) {
+    const a = prevM[id], b = newM[id]; if (a == null || b == null) continue;
+    const e = evs.find(x => x.id === id);
+    if (e) { if (Math.round(a * 100) !== Math.round(b * 100)) { e.a = a; e.b = b; } }
+    else if (Math.abs(b - a) >= 0.10) evs.push({ k: "odds", id, a, b });
+  }
+  for (const key of newFinalKeys) { const [a, b] = key.split("-").map(Number); evs.push({ k: "final", a, b }); }
+  if (wk) prevLive = Object.fromEntries(Object.entries(wk.teams).map(([k, v]) => [k, v.live]));
+  return evs.map(e => ({ ...e, what }));
+}
+function eventHtml(e, wk) {
+  if (e.k === "final") { const A = wk.teams[e.a].live, B = wk.teams[e.b].live, [w, l] = A >= B ? [e.a, e.b] : [e.b, e.a];
+    return `<b>Final</b> · ${nm(w)} ${f1(wk.teams[w].live)} – ${nm(l)} ${f1(wk.teams[l].live)}`; }
+  if (e.k === "odds") return `<b>Odds swing</b> · ${nm(e.id)} ${oddsTxt(e.a, e.b, e.what)}`;
+  return `<b>${nm(e.id)} ${e.d >= 0 ? "+" : "−"}${f1(Math.abs(e.d))}</b>${e.play ? ` · ${esc(e.play)}` : ""}${e.a != null ? ` · ${oddsTxt(e.a, e.b, e.what)}` : ""}`;
+}
+// after the play-by-play loads: name the play behind each score change, save to the log, pop the toast
+function publishChanges(evs, wk, since) {
+  if (!evs.length) return;
+  for (const e of evs) if (e.k === "score") {
+    const pr = wk.pairs.find(p => p.includes(e.id)), m = pr && IMP[pr[0] + "-" + pr[1] + ":" + e.id];
+    if (m && m.t >= since - 180000) e.play = `${m.name}: ${m.play}`;
+  }
+  const t = Date.now(), items = evs.map(e => ({ t, html: eventHtml(e, wk) }));
+  LOG.push(...items); if (LOG.length > 150) LOG = LOG.slice(-150);
+  try { localStorage.setItem(logKey, JSON.stringify(LOG)); } catch {}
+  renderLog();
+  const el = $("toast"); el.innerHTML = items.slice(0, 3).map(i => `<div>${i.html}</div>`).join("") + (items.length > 3 ? `<div>+${items.length - 3} more · tap to see all</div>` : "");
+  el.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove("show"), 6500);
+}
+
 // ---------- main ----------
 // Refresh fast while NFL games are live, slowly otherwise, and not at all while the page is hidden
 // (phone locked, another app or tab in front) so idle phones don't burn battery.
@@ -724,7 +810,7 @@ async function refresh() {
     pushHist({ t: Date.now(), m: newM });
     let swing = 0; if (prevM) for (const i of ids) { const d = newM[i] - (prevM[i] ?? newM[i]); if (Math.abs(d) >= 0.10 && Math.abs(d) > Math.abs(swing)) swing = d; }
     const finalsNow = new Set((wkShown?.pairs || []).filter(([a, b]) => !wkShown.teams[a].items.length && !wkShown.teams[b].items.length).map(p => p.join("-")));
-    const newFinals = prevFinals ? [...finalsNow].filter(k => !prevFinals.has(k)).length : 0; prevFinals = finalsNow;
+    const newFinalKeys = prevFinals ? [...finalsNow].filter(k => !prevFinals.has(k)) : [], newFinals = newFinalKeys.length; prevFinals = finalsNow;
 
     const { base } = standings(L, R);
     const W = {}, PF = {}; ids.forEach(i => { W[i] = base[i].w; PF[i] = base[i].pf; });
@@ -752,7 +838,8 @@ async function refresh() {
     const gTitle = wkShown?.live?.length ? "Live games" : mode === "race" ? `Week ${wkShown?.week ?? ""} matchups` : "This week's games";
     renderGames(wkShown, res, gTitle, labels);
     // scores are on screen first; the play-by-play loads after and the game cards redraw with each team's last play
-    lastPlays(wkShown).then(() => renderGames(wkShown, res, gTitle, labels)).catch(() => {});
+    const since = lastFetch, changes = diffChanges(wkShown, prevM, newM, newFinalKeys, mode === "race" && alive.length ? "playoff odds" : "title odds");
+    lastPlays(wkShown).then(() => renderGames(wkShown, res, gTitle, labels)).catch(() => {}).finally(() => publishChanges(changes, wkShown, since));
     const contenders = ids.filter(i => metricOf(i) > 0.0005);
     const ever = [...new Set(hist.flatMap(h => Object.keys(h.m || {}).filter(i => h.m[i] > 0.0005 && (mode !== "race" || !alive.length || h.m[i] < 0.9995))))].map(Number);
     // in the playoffs, only chart teams that are in the bracket (drops anyone removed from it)
